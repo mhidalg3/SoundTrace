@@ -1,0 +1,77 @@
+{
+  "profile": "soundtrace-v1",
+  "registry_id": "a55ed0a0f7baf3c26a224a9bc315d1cdfb012c23f55b57386e9914ea362383c8",
+  "unit": "tick",
+  "allowed_authorities": [
+    "fixture"
+  ],
+  "symbols": {
+    "start": {
+      "sort": "Int",
+      "scope": "sched",
+      "unit": "tick"
+    },
+    "duration": {
+      "sort": "Int",
+      "scope": "sched",
+      "unit": "tick"
+    },
+    "deadline": {
+      "sort": "Int",
+      "scope": "sched",
+      "unit": "tick"
+    }
+  },
+  "records": {
+    "S1": {
+      "scope": "sched",
+      "available_at": 1,
+      "authority": "fixture",
+      "formula": [
+        "eq",
+        "start",
+        4
+      ],
+      "source_span": "transfer-start"
+    },
+    "S2": {
+      "scope": "sched",
+      "available_at": 2,
+      "authority": "fixture",
+      "formula": [
+        "eq",
+        "duration",
+        4
+      ],
+      "source_span": "transfer-duration"
+    },
+    "S3": {
+      "scope": "sched",
+      "available_at": 3,
+      "authority": "fixture",
+      "formula": [
+        "eq",
+        "deadline",
+        6
+      ],
+      "source_span": "transfer-deadline"
+    }
+  },
+  "claims": {
+    "T1": {
+      "scope": "sched",
+      "available_at": 10,
+      "formula": [
+        "lt",
+        "deadline",
+        [
+          "add",
+          "start",
+          "duration"
+        ]
+      ],
+      "from": "over",
+      "source_span": "transfer-claim"
+    }
+  }
+}

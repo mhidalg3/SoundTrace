@@ -1,0 +1,15 @@
+{"kind": "run", "case": "read_patched"}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "acc", "kind": "observe", "evidence": "X1/A1.access", "assert": ["atom", "access"]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "lv", "kind": "observe", "evidence": "X1/A1.live", "assert": ["atom", "live"]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "ex", "kind": "observe", "evidence": "X1/A1.extent", "assert": ["eq", "extent", 6]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "wd", "kind": "observe", "evidence": "X1/A1.width", "assert": ["eq", "width", 4]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "of", "kind": "observe", "evidence": "X1/A1.offset", "assert": ["eq", "offset", 4]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "end", "kind": "calculate", "operator": "add", "left": {"ref": "of"}, "right": {"ref": "wd"}, "result": 8}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "vio", "kind": "compare", "relation": "lt", "left": {"ref": "ex"}, "right": {"ref": "end"}}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "pw", "kind": "compare", "relation": "lt", "left": 0, "right": {"ref": "wd"}}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "ne", "kind": "compare", "relation": "le", "left": 0, "right": {"ref": "ex"}}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "inner", "kind": "conjoin", "premises": ["pw", "vio"]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "range", "kind": "conjoin", "premises": ["ne", "inner"]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "alive", "kind": "conjoin", "premises": ["lv", "range"]}}
+{"kind": "reason", "argument_id": "C1", "node": {"id": "goal", "kind": "conjoin", "premises": ["acc", "alive"]}}
+{"kind": "claim", "argument_id": "C1", "event": "X1/A1", "access_kind": "read", "side": "upper", "from": "goal"}

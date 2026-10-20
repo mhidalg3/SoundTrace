@@ -1,0 +1,10 @@
+SYNTHETIC, AUTHOR-CONSTRUCTED FIXTURE — NOT A REAL AGENT RUN
+
+Observation 1: a = 120.
+Observation 2: b = 16.
+Observation 3: c = 128.
+Claim 1: Because a + b = 136 and 128 < 136, c < a + b.
+
+Domain binding (outside the proof): these could be an offset, a width, and an extent,
+or a start time, a duration, and a deadline. The certificate alone establishes
+only the arithmetic claim, not an access event or a vulnerability diagnosis.

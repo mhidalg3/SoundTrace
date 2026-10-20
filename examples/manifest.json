@@ -1,0 +1,77 @@
+{
+  "profile": "soundtrace-v1",
+  "registry_id": "821b698d51ee1234de666e0129d776bb0b276fada3c81b81257873d3abcc26dc",
+  "unit": "unit",
+  "allowed_authorities": [
+    "fixture"
+  ],
+  "symbols": {
+    "a": {
+      "sort": "Int",
+      "scope": "ctx1",
+      "unit": "unit"
+    },
+    "b": {
+      "sort": "Int",
+      "scope": "ctx1",
+      "unit": "unit"
+    },
+    "c": {
+      "sort": "Int",
+      "scope": "ctx1",
+      "unit": "unit"
+    }
+  },
+  "records": {
+    "E1": {
+      "scope": "ctx1",
+      "available_at": 1,
+      "authority": "fixture",
+      "formula": [
+        "eq",
+        "a",
+        120
+      ],
+      "source_span": "observation-1"
+    },
+    "E2": {
+      "scope": "ctx1",
+      "available_at": 2,
+      "authority": "fixture",
+      "formula": [
+        "eq",
+        "b",
+        16
+      ],
+      "source_span": "observation-2"
+    },
+    "E3": {
+      "scope": "ctx1",
+      "available_at": 3,
+      "authority": "fixture",
+      "formula": [
+        "eq",
+        "c",
+        128
+      ],
+      "source_span": "observation-3"
+    }
+  },
+  "claims": {
+    "C1": {
+      "scope": "ctx1",
+      "available_at": 10,
+      "formula": [
+        "lt",
+        "c",
+        [
+          "add",
+          "a",
+          "b"
+        ]
+      ],
+      "from": "cmp1",
+      "source_span": "claim-1"
+    }
+  }
+}

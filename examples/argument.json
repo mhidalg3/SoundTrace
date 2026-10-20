@@ -1,0 +1,75 @@
+[
+  {
+    "seq": 4,
+    "argument_id": "C1",
+    "node": {
+      "id": "obs_a",
+      "kind": "observe",
+      "evidence": "E1",
+      "assert": [
+        "eq",
+        "a",
+        120
+      ]
+    }
+  },
+  {
+    "seq": 5,
+    "argument_id": "C1",
+    "node": {
+      "id": "obs_b",
+      "kind": "observe",
+      "evidence": "E2",
+      "assert": [
+        "eq",
+        "b",
+        16
+      ]
+    }
+  },
+  {
+    "seq": 6,
+    "argument_id": "C1",
+    "node": {
+      "id": "obs_c",
+      "kind": "observe",
+      "evidence": "E3",
+      "assert": [
+        "eq",
+        "c",
+        128
+      ]
+    }
+  },
+  {
+    "seq": 7,
+    "argument_id": "C1",
+    "node": {
+      "id": "sum_ab",
+      "kind": "calculate",
+      "operator": "add",
+      "left": {
+        "ref": "obs_a"
+      },
+      "right": {
+        "ref": "obs_b"
+      },
+      "result": 136
+    }
+  },
+  {
+    "seq": 8,
+    "argument_id": "C1",
+    "node": {
+      "id": "cmp1",
+      "kind": "compare",
+      "relation": "lt",
+      "left": {
+        "ref": "obs_c"
+      },
+      "right": {
+        "ref": "sum_ab"
+      }
+    }
+  }
+]

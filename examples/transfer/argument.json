@@ -1,0 +1,75 @@
+[
+  {
+    "seq": 4,
+    "argument_id": "T1",
+    "node": {
+      "id": "obs_start",
+      "kind": "observe",
+      "evidence": "S1",
+      "assert": [
+        "eq",
+        "start",
+        4
+      ]
+    }
+  },
+  {
+    "seq": 5,
+    "argument_id": "T1",
+    "node": {
+      "id": "obs_duration",
+      "kind": "observe",
+      "evidence": "S2",
+      "assert": [
+        "eq",
+        "duration",
+        4
+      ]
+    }
+  },
+  {
+    "seq": 6,
+    "argument_id": "T1",
+    "node": {
+      "id": "obs_deadline",
+      "kind": "observe",
+      "evidence": "S3",
+      "assert": [
+        "eq",
+        "deadline",
+        6
+      ]
+    }
+  },
+  {
+    "seq": 7,
+    "argument_id": "T1",
+    "node": {
+      "id": "finish",
+      "kind": "calculate",
+      "operator": "add",
+      "left": {
+        "ref": "obs_start"
+      },
+      "right": {
+        "ref": "obs_duration"
+      },
+      "result": 8
+    }
+  },
+  {
+    "seq": 8,
+    "argument_id": "T1",
+    "node": {
+      "id": "over",
+      "kind": "compare",
+      "relation": "lt",
+      "left": {
+        "ref": "obs_deadline"
+      },
+      "right": {
+        "ref": "finish"
+      }
+    }
+  }
+]
