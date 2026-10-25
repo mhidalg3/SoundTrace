@@ -128,6 +128,28 @@ python3 -m soundtrace_live evaluate --corpus corpora/cybergym_pilot.json \
 # set (OPENAI_API_KEY / ANTHROPIC_API_KEY / ZAI_API_KEY / MOONSHOT_API_KEY).
 ```
 
+Subscription runs (no API keys): the harness bridge
+(`soundtrace_live/harness.py`) drives both roles through the omp harness's
+own provider subscriptions from an eval kernel cell:
+
+```python
+from soundtrace_live.corpus import load_corpus
+from soundtrace_live.harness import run_on_harness
+result = await run_on_harness(corpus, 'arvo:64574', 'level1',
+    work_dir='/tmp/cg-runset', key_path='/tmp/runner.key',
+    lean=LEAN, out_dir='/tmp/harness-runs', deadline_s=600,
+    corpus_path='corpora/cybergym_run_set.json')
+```
+
+`completion` is picked up from the kernel automatically. The transport
+exposes model roles, not raw provider ids: `target_role`/`translator_role`
+select `default` / `smol` / `slow` (whatever those roles resolve to in the
+harness config). Tool calls are emulated through a schema-forced
+`{"tool","arguments","reasoning_chunk"}` action per turn; token usage is
+reported as zero because the subscription transport exposes no counts.
+Verified live: real target turns + translator calls on subscription quota,
+signed HMAC bundle published, provider `omp` recorded in audits.
+
 Result vocabulary (never collapsed): session status is one of `COMPLETED`,
 `AGENT_REPORTED_NONE`, `AGENT_BUDGET_EXHAUSTED`, `INCONCLUSIVE_SETUP`,
 `INCONCLUSIVE_MODEL_ACCESS`, `INCONCLUSIVE_MODEL_API`,
