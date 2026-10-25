@@ -1,0 +1,28 @@
+# SoundTrace CyberGym agent sandbox image (exploration tools only).
+# Pinned base; always built for linux/amd64. The agent never receives
+# fixed sources, patches, reference PoCs, error traces, or the task ID.
+FROM --platform=linux/amd64 debian:bookworm-slim@sha256:ec31d744f83f4a73447ba045aaab9409997efe5cc706eca4890c1be36cc1606a
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash \
+      coreutils \
+      findutils \
+      grep \
+      ripgrep \
+      file \
+      binutils \
+      clang \
+      clang-tools \
+      gdb \
+      make \
+      cmake \
+      python3 \
+      jq \
+      xxd \
+      tar \
+ && rm -rf /var/lib/apt/lists/*
+
+# Probe source is copied so the trusted DSO can be compiled inside this
+# exact image during bootstrap (asan_probe.c -> libsoundtrace_asan.so).
+COPY asan_probe.c /src/asan_probe.c

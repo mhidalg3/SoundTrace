@@ -7,3 +7,26 @@ oob_cases
 oob_cases.dSYM
 __pycache__/
 .DS_Store
+# CyberGym live pipeline: downloaded data, keys, model artifacts, runs
+cybergym_data/
+cybergym-data/
+environment.lock.json
+libsoundtrace_asan.so
+*.poc
+runs/
+soundtrace-live-*/
+model-transcripts/
+work/
+qualification.json
+result.json
+metrics.json
+checker.json
+Certificate.lean
+tasks/
+probe/
+events/
+oracle/
+agent-work/
+.probe-poc/
+benchmark-poc/
+artifacts/

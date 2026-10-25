@@ -17,20 +17,17 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
-
+from admission import admit_claim, trust_text_for
 from constructor import ConstructionFailure, construct_certificate
+from direct import DirectError, assemble_direct_certificate
 from evidence import (Rejected, canonical_json, load_json, mac_matches,
                       sha256_hex)
 from frontend import Rejected as FrontRejected, check_lean, compile_certificate
-from oob_adapter import AUTHORITY, AdapterError, admit_oob
+from oob_adapter import AUTHORITY, AdapterError
 from runner import validate_bundle
 
 LEAN_VERSION = '4.34.1'
-TRUST_BOUNDARY = ('HMAC attests that the trusted runner recorded these bytes. Soundness '
-                  'is relative to the reviewed C fixture, compiler, sanitizer runtime, '
-                  'collector, host, and the private-key boundary; it is not a claim '
-                  'about arbitrary malicious executables or exploitability.')
+TRUST_BOUNDARY = trust_text_for(AUTHORITY)
 
 
 def _report(status: str, reason: str | None = None, **extra: Any) -> dict:
@@ -39,6 +36,28 @@ def _report(status: str, reason: str | None = None, **extra: Any) -> dict:
         out['reason'] = reason
     out.update(extra)
     return out
+
+
+def _classify_compile_error(message: str) -> str:
+    """Map a frontend compile rejection to a stable reason.
+
+    In direct mode the assembler does not judge arithmetic or inference, so
+    these are first caught at the preflight; a specific reason keeps the
+    poor-trace experiment's rejections meaningful.
+    """
+    m = message.lower()
+    if 'limit' in m:
+        return 'LIMIT_EXCEEDED'
+    if 'establish the frozen claim' in m or 'claim from' in m:
+        return 'CLAIM_MISMATCH'
+    if 'arithmetic claim is false' in m:
+        return 'FALSE_ARITHMETIC'
+    if any(w in m for w in ('rule conclusion', 'unknown rule', 'premise', 'required',
+                            'transport', 'conjunction', 'equality middle', 'equalities')):
+        return 'INVALID_INFERENCE'
+    if 'evidence' in m:
+        return 'EVIDENCE_CONFLICT'
+    return 'SOURCE_ALIGNMENT_FAILED'
 
 
 def verify_certificate(bundle: dict, cert: dict, *, key: bytes, lean: str,
@@ -51,8 +70,8 @@ def verify_certificate(bundle: dict, cert: dict, *, key: bytes, lean: str,
         return _report('REJECTED', 'BAD_INPUT', diagnostic=str(exc))
     payload = bundle['payload']
     report = {'run_id': payload['run_id'],
-              'evidence_class': AUTHORITY,
-              'trust_boundary': TRUST_BOUNDARY}
+              'evidence_class': payload.get('producer', AUTHORITY),
+              'trust_boundary': trust_text_for(payload.get('producer'))}
     if not mac_matches(key, canonical_json(payload), bundle['hmac_sha256']):
         return _report('REJECTED', 'AUTHENTICATION_FAILED',
                        diagnostic='bundle MAC verification failed', **report)
@@ -62,12 +81,25 @@ def verify_certificate(bundle: dict, cert: dict, *, key: bytes, lean: str,
     claim_id = cert['claim_id']
     report['claim_id'] = claim_id
 
+    mode = _argument_mode(payload, claim_id)
+    if mode == 'mixed':
+        return _report('REJECTED', 'BAD_INPUT',
+                       diagnostic='argument mixes direct (emit) and intermediate (reason) entries',
+                       **report)
+    if mode == 'abstained':
+        return _report('UNSUPPORTED_TRANSLATION', 'UNSUPPORTED_TRANSLATION',
+                       diagnostic='argument was closed by a translation abstention; '
+                                  'no proof was fabricated', **report)
+
+    if mode == 'direct':
+        return _verify_direct(payload, cert, claim_id, report, lean=lean, timeout=timeout)
+
     try:
-        manifest, argument = admit_oob(payload, claim_id)
+        manifest, argument = admit_claim(payload, claim_id)
     except AdapterError as exc:
         return _report(exc.status, exc.reason, diagnostic=exc.diagnostic, **report)
     except Rejected as exc:
-        return _report('REJECTED', 'BAD_INPUT', diagnostic=str(exc), **report)
+        return _report('REJECTED', 'BAD_INPUT', diagnostic=str(exc))
 
     bundle_sha256 = sha256_hex(canonical_json(payload))
     try:
@@ -94,24 +126,77 @@ def verify_certificate(bundle: dict, cert: dict, *, key: bytes, lean: str,
         return _report('REJECTED', 'SOURCE_ALIGNMENT_FAILED',
                        diagnostic='certificate does not byte-match the deterministic '
                                   'reconstruction of the recorded argument', **report)
+    return _finish(manifest, cert, report, payload, lean, timeout,
+                   'VERIFIED_OBSERVATION_BACKED', classify_compile=False)
+
+
+def _argument_mode(payload: dict, claim_id: str) -> str:
+    has_emit = has_reason = has_abstain = False
+    for entry in payload['trace']:
+        if entry['kind'] != 'request':
+            continue
+        body = entry['body']
+        if body.get('argument_id') != claim_id:
+            continue
+        if body.get('kind') == 'emit':
+            has_emit = True
+        elif body.get('kind') == 'reason':
+            has_reason = True
+        elif body.get('kind') == 'translation_abstain':
+            has_abstain = True
+    if has_emit and has_reason:
+        return 'mixed'
+    if has_emit:
+        return 'direct'
+    if has_abstain:
+        return 'abstained'
+    if has_reason:
+        return 'intermediate'
+    return 'none'
+
+
+def _verify_direct(payload: dict, cert: dict, claim_id: str, report: dict, *,
+                   lean: str, timeout: float) -> dict:
+    """Direct (signed-output) path: reconstruct from signed emissions, byte-match,
+    then run the kernel; the headline result is VERIFIED_EVIDENCE_AND_KERNEL."""
+    bundle_sha256 = sha256_hex(canonical_json(payload))
+    try:
+        manifest, _ = admit_claim(payload, claim_id)
+    except AdapterError as exc:
+        return _report(exc.status, exc.reason, diagnostic=exc.diagnostic, **report)
+    except Rejected as exc:
+        return _report('REJECTED', 'BAD_INPUT', diagnostic=str(exc), **report)
+    try:
+        expected = assemble_direct_certificate(payload, claim_id, bundle_sha256=bundle_sha256)
+    except DirectError as exc:
+        extra = {'source_id': exc.source_id} if exc.source_id else {}
+        return _report(exc.status, exc.reason, diagnostic=exc.diagnostic, **report, **extra)
+    if canonical_json(expected) != canonical_json(cert):
+        return _report('REJECTED', 'SOURCE_ALIGNMENT_FAILED',
+                       diagnostic='certificate does not byte-match the signed translator '
+                                  'emissions', **report)
+    return _finish(manifest, cert, report, payload, lean, timeout,
+                   'VERIFIED_EVIDENCE_AND_KERNEL')
+
+
+def _finish(manifest: dict, cert: dict, report: dict, payload: dict, lean: str,
+            timeout: float, verified_status: str,
+            *, classify_compile: bool = True) -> dict:
+    """Shared tail: frontend preflight + pinned Lean kernel + result mapping."""
     try:
         code, preflight = compile_certificate(manifest, cert)
     except FrontRejected as exc:
-        return _report('REJECTED', 'SOURCE_ALIGNMENT_FAILED', diagnostic=str(exc), **report)
-
+        reason = (_classify_compile_error(str(exc))
+                  if classify_compile else 'SOURCE_ALIGNMENT_FAILED')
+        return _report('REJECTED', reason, diagnostic=str(exc), **report)
     backend = check_lean(code, lean, timeout=timeout)
     status = backend['status']
     if status == 'KERNEL_VERIFIED_RELATIVE_TO_MANIFEST':
-        return _report('VERIFIED_OBSERVATION_BACKED',
-                       claim_id=claim_id, run_id=payload['run_id'],
-                       evidence_class=AUTHORITY, steps=preflight['steps'],
+        return _report(verified_status, **report, steps=preflight['steps'],
                        backend={'version': backend.get('backend_version', LEAN_VERSION),
-                                'axiom_audit': 'empty'},
-                       trust_boundary=TRUST_BOUNDARY)
+                                'axiom_audit': 'empty'})
     out = _report(status, backend.get('reason'),
-                  diagnostic=backend.get('diagnostic', ''), claim_id=claim_id,
-                  run_id=payload['run_id'], evidence_class=AUTHORITY,
-                  trust_boundary=TRUST_BOUNDARY)
+                  diagnostic=backend.get('diagnostic', ''), **report)
     if 'axiom_audit' in backend:
         out['backend'] = {'version': backend.get('backend_version', LEAN_VERSION),
                           'axiom_audit': backend['axiom_audit']}
@@ -137,7 +222,7 @@ def main() -> int:
                                 timeout=args.timeout)
     print(json.dumps(result, indent=2))
     status = result['status']
-    if status == 'VERIFIED_OBSERVATION_BACKED':
+    if status in ('VERIFIED_OBSERVATION_BACKED', 'VERIFIED_EVIDENCE_AND_KERNEL'):
         return 0
     if status == 'REJECTED':
         return 1

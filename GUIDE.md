@@ -356,7 +356,57 @@ step; nothing was reordered to make a false step true (if the arithmetic
 doesn't hold, the argument is simply rejected — rewrite the reasoning, not
 the numbers).
 
-## 9. What you can and cannot conclude
+## 9. Direct mode: signed translator output (no intermediate language)
+
+Everything so far used the typed reasoning trace (`reason` lines). There is a
+second, lighter protocol in which an (untrusted) translator emits the
+low-level certificate steps directly, and the runner signs each emission into
+the same ordered log. It produces a slightly weaker but still kernel-checked
+result, `VERIFIED_EVIDENCE_AND_KERNEL`.
+
+The session has three request kinds instead of `reason`:
+
+- `{"kind":"run","case":"read_upper"}` — same as before.
+- `{"kind":"narrate","argument_id":"C1","text":"..."}` — the target agent's
+  free-text reasoning chunk, recorded for the audit trail only (never
+  interpreted).
+- `{"kind":"emit","argument_id":"C1","id":"end","steps":[ ... ]}` — one block
+  of primitive certificate steps from the translator. Each `steps` entry is a
+  low-level step: `{"op":"observe","evidence":"X1/A1.offset","formula":["eq","offset",4]}`,
+  `{"op":"compute","formula":["eq",["add",4,4],8]}`, or
+  `{"op":"infer","rule":"eq_trans","premises":[3,4],"formula":[...]}`. Premise
+  indices are positions in the *global* concatenation of all emissions so far.
+- `{"kind":"claim",...,"from":"<last emission id>"}` — same as before; `from`
+  names the last emission's `id`.
+
+What the runner enforces live: each emission is structurally well-formed, its
+observe steps cite only evidence already delivered, and premise indices point
+backward. What it deliberately does **not** check: arithmetic truth or rule
+correctness — so a bad `4+4=7` or an invalid inference is recorded faithfully
+and rejected later by the checker with a specific reason (this is what lets you
+measure poor reasoning).
+
+Instead of `constructor.py`, use `direct.py` to assemble the certificate from
+the signed emissions, then check it:
+
+```sh
+python3 runner.py record --key "$WORK/runner.key" \
+  --out "$WORK/direct.bundle.json" < examples/sessions/direct_read_upper.jsonl
+python3 direct.py "$WORK/direct.bundle.json" --claim C1 \
+  --key "$WORK/runner.key" --out "$WORK/direct.certificate.json"
+python3 checker.py "$WORK/direct.bundle.json" "$WORK/direct.certificate.json" \
+  --key "$WORK/runner.key" --lean "$LEAN"
+# -> VERIFIED_EVIDENCE_AND_KERNEL, axiom_audit "empty"
+```
+
+The checker rebuilds the certificate from the signed emissions and demands a
+byte-exact match, so a certificate synthesized offline (after seeing the whole
+bundle) cannot be substituted. The difference from the intermediate path:
+`VERIFIED_EVIDENCE_AND_KERNEL` proves authenticated evidence and a kernel-valid
+claim, but does **not** mechanically prove the certificate mirrors the agent's
+wording — only the intermediate path's `VERIFIED_OBSERVATION_BACKED` adds that.
+
+## 10. What you can and cannot conclude
 
 You *can* conclude: "in this signed recording, this specific access was
 out-of-bounds, and this exact recorded argument proves it, machine-checked."
@@ -370,3 +420,106 @@ arbitrary programs.
 Reference material: `LANGUAGE.md` (the certificate language),
 `README.md` (commands and vocabulary), `DEVELOPMENT_PLAN.md` (research
 context), `tests/` (what "correct" means, executable).
+
+## 11. CyberGym live pipeline (real targets, live models)
+
+The fixture path above proves the machinery; the CyberGym extension runs it
+against real vulnerable programs with a live target agent and a live
+translator. Nothing in the proof boundary changes shape: the same five facts,
+the same frozen target, the same HMAC-signed ordering, the same
+assembler/checker/kernel triangle. What changes is the producer.
+
+### Pieces
+
+- `corpora/cybergym_pilot.json` pins three tasks (`arvo:64574` jq,
+  `arvo:47101` binutils, `oss-fuzz:42535201` assimp), their Linux/amd64
+  vulnerable/fixed image digests, the CyberGym code revision, and the data
+  remote. `soundtrace_live/corpus.py` rejects any drift before a pull.
+  `arvo:368` (freetype2) was replaced by `arvo:64574` after oracle
+  qualification: its reference PoC triggers a heap-use-after-free, and the
+  corpus admits exact `heap-buffer-overflow` reports only.
+- `soundtrace_live/asan_probe.c` is the reviewed preload shim: ASan's weak
+  error-report callback writes exactly one machine event (address, kind,
+  width, description, pc, heap region base/extent) to a runner-private mount
+  through raw syscalls. Human stderr is never parsed.
+- `soundtrace_live/cybergym_backend.py` runs each candidate PoC in a fresh,
+  pinned, locked-down container (`--network none`, read-only root,
+  cap-drop-all, no-new-privileges, 4 GiB/2 CPU/128 PIDs, tmpfs `/tmp`, PoC
+  read-only at `/tmp/poc`, fixed ASan options, 10 s inner / 30 s host
+  timeouts, 1 MiB output and 64 KiB event caps) and classifies: admissible
+  heap report, clean run, or inconclusive capture. `bootstrap` verifies every
+  pinned digest, fetches only the selected data (Git + LFS), extracts
+  traversal-safely, builds the agent image and the shim, and writes
+  `environment.lock.json`. `qualify` proves each task's private oracle PoC
+  crashes the vulnerable image with one admissible heap report and exits
+  cleanly in the fixed image.
+- `runner.py record --backend cybergym` speaks `probe` instead of `run` and
+  adds the translation bookkeeping (`translation_attempt`,
+  `translation_abstain`) plus bounded audit-only records for the model and
+  agent trail. Every CyberGym emission names the narration it translates
+  (`source_seq`) and its attempt; the runner hashes the emission against that
+  attempt and requires cited evidence to predate the narration — translation
+  that finishes late can never admit newer evidence. A probe-level
+  `INCONCLUSIVE_CAPTURE` is signed and the session continues.
+- The target agent (OpenAI Responses API, `gpt-daybreak-blue-latest` via
+  access program `daybreak_blue`) explores the extracted vulnerable source in
+  a network-less sandbox with `shell`, `probe`, `report_oob`, and
+  `report_none`. It never sees the task ID, image, digests, the oracle PoC,
+  or fixed-image results. Its visible text and public `reasoning_chunk`
+  values are narrated, signed, and translated; hidden chain-of-thought is
+  never claimed, logged, or certified.
+- The translator (`gpt-5.6-luna`, strict JSON schema) converts each visible
+  chunk into primitive steps. It validates shape and provenance only:
+  representable-but-wrong arithmetic is emitted and rejected downstream —
+  never repaired into correctness. Malformed output gets one repair, then
+  `UNSUPPORTED_TRANSLATION`. That is an exit-2 result for the direct/checker
+  command; a live `run` or `evaluate` session records that status in its
+  result while the process exits normally.
+
+### Commands
+
+```sh
+WORK="$(mktemp -d)"
+python3 -m soundtrace_live bootstrap --corpus corpora/cybergym_pilot.json \
+    --data-dir "$CYBERGYM_DATA_DIR" --work-dir "$WORK/env"   # omit --data-dir to fetch
+python3 -m soundtrace_live qualify --corpus corpora/cybergym_pilot.json \
+    --work-dir "$WORK/env"   # creates $WORK/env/runner.key when omitted
+python3 -m soundtrace_live evaluate \
+    --corpus corpora/cybergym_pilot.json --difficulties level1,level0 \
+    --key "$WORK/env/runner.key" --lean "$LEAN" --work-dir "$WORK/env" \
+    --out "$WORK/runs"
+```
+
+Roles are provider chains: `--target-chain`/`--translator-chain` take
+comma-separated `provider:model` entries tried in order (availability-only
+fallback; budget-exhausted runs are never retried). Defaults: target
+`zai:glm-5.3,anthropic:claude-sonnet-4-6`; translator
+`moonshot:kimi-k3.1,anthropic:claude-sonnet-4-6`. Every distinct provider's
+key env must be set: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ZAI_API_KEY`,
+`MOONSHOT_API_KEY`.
+
+Depending on how far the session progresses, a run writes `metrics.json` and
+`result.json`, and a completed recording also writes `bundle.json`, under
+`<out>/<difficulty>/<task_id>/<session-label-random>/`. `certificate.json`,
+`Certificate.lean`, and `checker.json` appear only when certificate assembly
+and checker verification are reached; preflight failures and unsupported
+translation can omit them.
+The result keeps three independent outcomes: `flag_success` (the final PoC
+crashes the vulnerable image and exits cleanly in the fixed one),
+`claim_status` (the checker verdict), and `translation_status`. Session
+statuses never collapse agent miss, translator abstention, checker rejection,
+capture inconclusive, and kernel inconclusive.
+
+### What you can and cannot conclude (CyberGym producer)
+
+You can conclude: "in this signed recording, this PoC triggered this
+machine-reported heap out-of-bounds access in the pinned image, and the
+translator's recorded emissions prove the frozen target relative to those
+authenticated observations, machine-checked."
+
+You cannot conclude: translation fidelity (whether the formal steps mirror
+the prose — an empirical metric reviewed from signed source/emission pairs),
+overall program safety, exploitability, or anything about a malicious target
+that attacks its in-container side channel. Soundness is relative to the
+pinned image, its sanitizer runtime, the reviewed shim, the Docker host and
+orchestrator, and the private-key boundary.

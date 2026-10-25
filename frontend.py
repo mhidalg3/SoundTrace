@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -481,9 +482,17 @@ def check_lean(code: str, lean: str, timeout: float = 10.0) -> dict:
     executable = shutil.which(lean) if isinstance(lean, str) and lean else None
     if executable is None:
         return {'status': 'INCONCLUSIVE_NO_LEAN_BACKEND'}
+    deadline = time.monotonic() + max(0.0, timeout)
+
+    def remaining() -> float:
+        return deadline - time.monotonic()
+
     try:
+        version_timeout = remaining()
+        if version_timeout <= 0:
+            return {'status': 'INCONCLUSIVE_TIMEOUT', 'stage': 'version check'}
         version_proc = subprocess.run([executable, '--version'], capture_output=True,
-                                      text=True, timeout=timeout, check=False)
+                                      text=True, timeout=version_timeout, check=False)
     except subprocess.TimeoutExpired:
         return {'status': 'INCONCLUSIVE_TIMEOUT', 'stage': 'version check'}
     except OSError as exc:
@@ -498,9 +507,13 @@ def check_lean(code: str, lean: str, timeout: float = 10.0) -> dict:
         path = Path(temp) / 'Certificate.lean'
         path.write_text(code, encoding='utf-8')
         try:
+            compile_timeout = remaining()
+            if compile_timeout <= 0:
+                return {'status': 'INCONCLUSIVE_TIMEOUT',
+                        'backend_version': LEAN_VERSION}
             proc = subprocess.run([executable, str(path)], capture_output=True, text=True,
                                   encoding='utf-8', errors='replace',
-                                  timeout=timeout, check=False, env=env, cwd=temp)
+                                  timeout=compile_timeout, check=False, env=env, cwd=temp)
         except subprocess.TimeoutExpired:
             return {'status': 'INCONCLUSIVE_TIMEOUT', 'backend_version': LEAN_VERSION}
         output = proc.stdout + proc.stderr

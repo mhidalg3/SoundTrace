@@ -1,0 +1,81 @@
+{
+  "schema": "soundtrace-cybergym-corpus-v1",
+  "cybergym_code_revision": "c6fe2027d39471375920b92cf1025e23a99ffda5",
+  "data_remote": "https://huggingface.co/datasets/sunblaze-ucb/cybergym",
+  "platform": "linux/amd64",
+  "difficulties": ["level1", "level0"],
+  "tasks": [
+    {
+      "task_id": "arvo:64574",
+      "kind": "arvo",
+      "project": "jq",
+      "vulnerability_class": "heap-buffer-overflow",
+      "images": {
+        "vul": {
+          "reference": "n132/arvo:64574-vul@sha256:b73bb925d175e17c85ce73d96792b728c2a20d5763db1f822f443ce398be627d",
+          "digest": "sha256:b73bb925d175e17c85ce73d96792b728c2a20d5763db1f822f443ce398be627d",
+          "platform": "linux/amd64"
+        },
+        "fix": {
+          "reference": "n132/arvo:64574-fix@sha256:d1f2c361a0de3b4858c09a90d712a74dd2b3e4097776bbe29084606aa8fcce93",
+          "digest": "sha256:d1f2c361a0de3b4858c09a90d712a74dd2b3e4097776bbe29084606aa8fcce93",
+          "platform": "linux/amd64"
+        }
+      },
+      "sources": {
+        "archive": "data/arvo/64574/repo-vul.tar.gz",
+        "description": "data/arvo/64574/description.txt"
+      },
+      "command": {"vul": ["/bin/arvo"], "fix": ["/bin/arvo"]},
+      "poc_mount": "/tmp/poc"
+    },
+    {
+      "task_id": "arvo:47101",
+      "kind": "arvo",
+      "project": "binutils",
+      "vulnerability_class": "heap-buffer-overflow",
+      "images": {
+        "vul": {
+          "reference": "n132/arvo:47101-vul@sha256:d7406e0e71dabe5f8af5557e8aeb59d6e5d181f66b5a17953f034215e5ec6207",
+          "digest": "sha256:d7406e0e71dabe5f8af5557e8aeb59d6e5d181f66b5a17953f034215e5ec6207",
+          "platform": "linux/amd64"
+        },
+        "fix": {
+          "reference": "n132/arvo:47101-fix@sha256:475243b95a7bcb7eec06a2d404cffb860b3fa331b2d2bb077fb3df223634509b",
+          "digest": "sha256:475243b95a7bcb7eec06a2d404cffb860b3fa331b2d2bb077fb3df223634509b",
+          "platform": "linux/amd64"
+        }
+      },
+      "sources": {
+        "archive": "data/arvo/47101/repo-vul.tar.gz",
+        "description": "data/arvo/47101/description.txt"
+      },
+      "command": {"vul": ["/bin/arvo"], "fix": ["/bin/arvo"]},
+      "poc_mount": "/tmp/poc"
+    },
+    {
+      "task_id": "oss-fuzz:42535201",
+      "kind": "oss-fuzz",
+      "project": "assimp",
+      "vulnerability_class": "heap-buffer-overflow",
+      "images": {
+        "vul": {
+          "reference": "cybergym/oss-fuzz:42535201-vul@sha256:d179b92b3cd1abc986b5525a9c8811d682ed7c0d4e13bab6bb7fb8e07ba1deb7",
+          "digest": "sha256:d179b92b3cd1abc986b5525a9c8811d682ed7c0d4e13bab6bb7fb8e07ba1deb7",
+          "platform": "linux/amd64"
+        },
+        "fix": {
+          "reference": "cybergym/oss-fuzz:42535201-fix@sha256:3ddca5cf0826a5543f349465491b80756e3afc471e5e211071a146108812ec3f",
+          "digest": "sha256:3ddca5cf0826a5543f349465491b80756e3afc471e5e211071a146108812ec3f",
+          "platform": "linux/amd64"
+        }
+      },
+      "sources": {
+        "archive": "data/oss-fuzz/42535201/repo-vul.tar.gz",
+        "description": "data/oss-fuzz/42535201/description.txt"
+      },
+      "command": {"vul": ["/usr/local/bin/run_poc"], "fix": ["/usr/local/bin/run_poc"]},
+      "poc_mount": "/tmp/poc"
+    }
+  ]
+}

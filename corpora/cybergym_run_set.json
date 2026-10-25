@@ -1,0 +1,384 @@
+{
+ "schema": "soundtrace-cybergym-corpus-v1",
+ "cybergym_code_revision": "c6fe2027d39471375920b92cf1025e23a99ffda5",
+ "data_remote": "https://huggingface.co/datasets/sunblaze-ucb/cybergym",
+ "platform": "linux/amd64",
+ "difficulties": [
+  "level1",
+  "level0"
+ ],
+ "tasks": [
+  {
+   "task_id": "arvo:3848",
+   "kind": "arvo",
+   "project": "yara",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:3848-vul@sha256:2885b0966220cac1798825b3a9d67e80faf39a42e95fe95c3d0324ff60f32425",
+     "digest": "sha256:2885b0966220cac1798825b3a9d67e80faf39a42e95fe95c3d0324ff60f32425",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:3848-fix@sha256:d0f9ab0639a7d00730905e0c6f42d3ddad886cf860c05e07cc646c74de0bf778",
+     "digest": "sha256:d0f9ab0639a7d00730905e0c6f42d3ddad886cf860c05e07cc646c74de0bf778",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/3848/repo-vul.tar.gz",
+    "description": "data/arvo/3848/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:38943",
+   "kind": "arvo",
+   "project": "gdbm",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:38943-vul@sha256:8729f0e5bb32721e5f8588a061bb141467b6798abc1d2e8e956d7d0fb95762ad",
+     "digest": "sha256:8729f0e5bb32721e5f8588a061bb141467b6798abc1d2e8e956d7d0fb95762ad",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:38943-fix@sha256:7a588720f1f18e39602ce8bdd786cebab0f52048d797da364f7452ca0f74b2e8",
+     "digest": "sha256:7a588720f1f18e39602ce8bdd786cebab0f52048d797da364f7452ca0f74b2e8",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/38943/repo-vul.tar.gz",
+    "description": "data/arvo/38943/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:47101",
+   "kind": "arvo",
+   "project": "binutils",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:47101-vul@sha256:d7406e0e71dabe5f8af5557e8aeb59d6e5d181f66b5a17953f034215e5ec6207",
+     "digest": "sha256:d7406e0e71dabe5f8af5557e8aeb59d6e5d181f66b5a17953f034215e5ec6207",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:47101-fix@sha256:475243b95a7bcb7eec06a2d404cffb860b3fa331b2d2bb077fb3df223634509b",
+     "digest": "sha256:475243b95a7bcb7eec06a2d404cffb860b3fa331b2d2bb077fb3df223634509b",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/47101/repo-vul.tar.gz",
+    "description": "data/arvo/47101/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:57002",
+   "kind": "arvo",
+   "project": "mosquitto",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:57002-vul@sha256:7e57289a00bd50f5d957052421bf825c1500032375a93be87d4bd4cfd24924e1",
+     "digest": "sha256:7e57289a00bd50f5d957052421bf825c1500032375a93be87d4bd4cfd24924e1",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:57002-fix@sha256:d898109faca18844a80762de9afc0c2460475a24f5f7dbb1769d63da42497d8c",
+     "digest": "sha256:d898109faca18844a80762de9afc0c2460475a24f5f7dbb1769d63da42497d8c",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/57002/repo-vul.tar.gz",
+    "description": "data/arvo/57002/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:62911",
+   "kind": "arvo",
+   "project": "libxml2",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:62911-vul@sha256:f90523e486a4b2f13dc2098dc8a07ac30ccc087eeac85029ea689e5c238e9e9c",
+     "digest": "sha256:f90523e486a4b2f13dc2098dc8a07ac30ccc087eeac85029ea689e5c238e9e9c",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:62911-fix@sha256:ce5b4b493783b7ed9b6837a749400ac437c2a1b880c1319efbb21cba3f477735",
+     "digest": "sha256:ce5b4b493783b7ed9b6837a749400ac437c2a1b880c1319efbb21cba3f477735",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/62911/repo-vul.tar.gz",
+    "description": "data/arvo/62911/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:64574",
+   "kind": "arvo",
+   "project": "jq",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:64574-vul@sha256:b73bb925d175e17c85ce73d96792b728c2a20d5763db1f822f443ce398be627d",
+     "digest": "sha256:b73bb925d175e17c85ce73d96792b728c2a20d5763db1f822f443ce398be627d",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:64574-fix@sha256:d1f2c361a0de3b4858c09a90d712a74dd2b3e4097776bbe29084606aa8fcce93",
+     "digest": "sha256:d1f2c361a0de3b4858c09a90d712a74dd2b3e4097776bbe29084606aa8fcce93",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/64574/repo-vul.tar.gz",
+    "description": "data/arvo/64574/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:6483",
+   "kind": "arvo",
+   "project": "curl",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:6483-vul@sha256:2f3363c353ddf5966e2964ed5d3454f547b84d35d6fc5c668a96db321088ac87",
+     "digest": "sha256:2f3363c353ddf5966e2964ed5d3454f547b84d35d6fc5c668a96db321088ac87",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:6483-fix@sha256:2408aef2ea739c6ffbb1ad2faea5839d43824a2f15154cc348e2c443e83e1145",
+     "digest": "sha256:2408aef2ea739c6ffbb1ad2faea5839d43824a2f15154cc348e2c443e83e1145",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/6483/repo-vul.tar.gz",
+    "description": "data/arvo/6483/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:64960",
+   "kind": "arvo",
+   "project": "libxaac",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:64960-vul@sha256:9b4498a216873a47aa5c9b01bdefde636c99e2076a57d091e376e74e58c0a178",
+     "digest": "sha256:9b4498a216873a47aa5c9b01bdefde636c99e2076a57d091e376e74e58c0a178",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:64960-fix@sha256:8aec5e991e4e970d9dba3c99253cace0ff7803b8832eb4db47970c2e4bdb5bc4",
+     "digest": "sha256:8aec5e991e4e970d9dba3c99253cace0ff7803b8832eb4db47970c2e4bdb5bc4",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/64960/repo-vul.tar.gz",
+    "description": "data/arvo/64960/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:65212",
+   "kind": "arvo",
+   "project": "libssh2",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:65212-vul@sha256:30d69f5b644640888f2b30cba7e8b2310f4acf98bbcce1a190168550927a5520",
+     "digest": "sha256:30d69f5b644640888f2b30cba7e8b2310f4acf98bbcce1a190168550927a5520",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:65212-fix@sha256:235a4e4d4344c958b9543fecabad7ba331a19866debf216a8f9446b1dc3f50af",
+     "digest": "sha256:235a4e4d4344c958b9543fecabad7ba331a19866debf216a8f9446b1dc3f50af",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/65212/repo-vul.tar.gz",
+    "description": "data/arvo/65212/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:65383",
+   "kind": "arvo",
+   "project": "htslib",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:65383-vul@sha256:2a5853534964e6a983635a29142abc92b76e02fe04f5428a01f5657591db4757",
+     "digest": "sha256:2a5853534964e6a983635a29142abc92b76e02fe04f5428a01f5657591db4757",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:65383-fix@sha256:a9a8c963ba5dc9895ea83a8d932c04876e04d3d5e38a17b4102fb91ba9224858",
+     "digest": "sha256:a9a8c963ba5dc9895ea83a8d932c04876e04d3d5e38a17b4102fb91ba9224858",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/65383/repo-vul.tar.gz",
+    "description": "data/arvo/65383/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "arvo:67297",
+   "kind": "arvo",
+   "project": "pcre2",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "n132/arvo:67297-vul@sha256:aa6ea4e7a1d7dda1742a6b8faf3f1aa00e801b2db3013f95f5430fcb2e7645ec",
+     "digest": "sha256:aa6ea4e7a1d7dda1742a6b8faf3f1aa00e801b2db3013f95f5430fcb2e7645ec",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "n132/arvo:67297-fix@sha256:7a17485b538f4cb3be37e7bed698bc311df10069c55118f6699d1654e4e565a8",
+     "digest": "sha256:7a17485b538f4cb3be37e7bed698bc311df10069c55118f6699d1654e4e565a8",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/arvo/67297/repo-vul.tar.gz",
+    "description": "data/arvo/67297/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/bin/arvo"
+    ],
+    "fix": [
+     "/bin/arvo"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  },
+  {
+   "task_id": "oss-fuzz:42535201",
+   "kind": "oss-fuzz",
+   "project": "assimp",
+   "vulnerability_class": "heap-buffer-overflow",
+   "images": {
+    "vul": {
+     "reference": "cybergym/oss-fuzz:42535201-vul@sha256:d179b92b3cd1abc986b5525a9c8811d682ed7c0d4e13bab6bb7fb8e07ba1deb7",
+     "digest": "sha256:d179b92b3cd1abc986b5525a9c8811d682ed7c0d4e13bab6bb7fb8e07ba1deb7",
+     "platform": "linux/amd64"
+    },
+    "fix": {
+     "reference": "cybergym/oss-fuzz:42535201-fix@sha256:3ddca5cf0826a5543f349465491b80756e3afc471e5e211071a146108812ec3f",
+     "digest": "sha256:3ddca5cf0826a5543f349465491b80756e3afc471e5e211071a146108812ec3f",
+     "platform": "linux/amd64"
+    }
+   },
+   "sources": {
+    "archive": "data/oss-fuzz/42535201/repo-vul.tar.gz",
+    "description": "data/oss-fuzz/42535201/description.txt"
+   },
+   "command": {
+    "vul": [
+     "/usr/local/bin/run_poc"
+    ],
+    "fix": [
+     "/usr/local/bin/run_poc"
+    ]
+   },
+   "poc_mount": "/tmp/poc"
+  }
+ ]
+}

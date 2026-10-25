@@ -1,0 +1,16 @@
+{"kind": "run", "case": "read_upper"}
+{"kind": "narrate", "argument_id": "C1", "text": "Buffer extent 6, read width 4 at offset 4; end=8>6 so upper OOB."}
+{"kind": "emit", "argument_id": "C1", "id": "acc", "steps": [{"evidence": "X1/A1.access", "formula": ["atom", "access"], "op": "observe"}]}
+{"kind": "emit", "argument_id": "C1", "id": "lv", "steps": [{"evidence": "X1/A1.live", "formula": ["atom", "live"], "op": "observe"}]}
+{"kind": "emit", "argument_id": "C1", "id": "ex", "steps": [{"evidence": "X1/A1.extent", "formula": ["eq", "extent", 6], "op": "observe"}]}
+{"kind": "emit", "argument_id": "C1", "id": "wd", "steps": [{"evidence": "X1/A1.width", "formula": ["eq", "width", 4], "op": "observe"}]}
+{"kind": "emit", "argument_id": "C1", "id": "of", "steps": [{"evidence": "X1/A1.offset", "formula": ["eq", "offset", 4], "op": "observe"}]}
+{"kind": "emit", "argument_id": "C1", "id": "end", "steps": [{"formula": ["eq", ["add", "offset", "width"], ["add", 4, 4]], "op": "infer", "premises": [4, 3], "rule": "add_eq"}, {"formula": ["eq", ["add", 4, 4], 8], "op": "compute"}, {"formula": ["eq", ["add", "offset", "width"], 8], "op": "infer", "premises": [5, 6], "rule": "eq_trans"}]}
+{"kind": "emit", "argument_id": "C1", "id": "vio", "steps": [{"formula": ["lt", 6, 8], "op": "compute"}, {"formula": ["lt", "extent", ["add", "offset", "width"]], "op": "infer", "premises": [2, 7, 8], "rule": "lt_transport"}]}
+{"kind": "emit", "argument_id": "C1", "id": "pw", "steps": [{"formula": ["eq", 0, 0], "op": "compute"}, {"formula": ["lt", 0, 4], "op": "compute"}, {"formula": ["lt", 0, "width"], "op": "infer", "premises": [10, 3, 11], "rule": "lt_transport"}]}
+{"kind": "emit", "argument_id": "C1", "id": "ne", "steps": [{"formula": ["eq", 0, 0], "op": "compute"}, {"formula": ["le", 0, 6], "op": "compute"}, {"formula": ["le", 0, "extent"], "op": "infer", "premises": [13, 2, 14], "rule": "le_transport"}]}
+{"kind": "emit", "argument_id": "C1", "id": "inner", "steps": [{"formula": ["and", ["lt", 0, "width"], ["lt", "extent", ["add", "offset", "width"]]], "op": "infer", "premises": [12, 9], "rule": "and_intro"}]}
+{"kind": "emit", "argument_id": "C1", "id": "range", "steps": [{"formula": ["and", ["le", 0, "extent"], ["and", ["lt", 0, "width"], ["lt", "extent", ["add", "offset", "width"]]]], "op": "infer", "premises": [15, 16], "rule": "and_intro"}]}
+{"kind": "emit", "argument_id": "C1", "id": "alive", "steps": [{"formula": ["and", ["atom", "live"], ["and", ["le", 0, "extent"], ["and", ["lt", 0, "width"], ["lt", "extent", ["add", "offset", "width"]]]]], "op": "infer", "premises": [1, 17], "rule": "and_intro"}]}
+{"kind": "emit", "argument_id": "C1", "id": "goal", "steps": [{"formula": ["and", ["atom", "access"], ["and", ["atom", "live"], ["and", ["le", 0, "extent"], ["and", ["lt", 0, "width"], ["lt", "extent", ["add", "offset", "width"]]]]]], "op": "infer", "premises": [0, 18], "rule": "and_intro"}]}
+{"kind": "claim", "argument_id": "C1", "event": "X1/A1", "access_kind": "read", "side": "upper", "from": "goal"}

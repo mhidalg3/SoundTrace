@@ -15,8 +15,13 @@ establish hidden-reasoning faithfulness or whole-program safety.
    bindings live only in `oob_adapter.py`.
 2. **Certificate language:** generic arithmetic/propositional deductions only.
    Units, scopes, identities, and authorities are carried, not interpreted.
-3. **Constructor:** fixed template expansion of typed nodes; no search, no
-   repair, no simplification.
+3. **Certificate production (two modes):** the **intermediate** path expands
+   typed reasoning nodes via a deterministic constructor (fixed templates, no
+   search/repair/simplification); the **direct** path (`direct.py`) assembles
+   the certificate from signed translator emissions recorded live by the
+   runner. Both yield the same certificate format; only reconstruction and the
+   result tier differ (`VERIFIED_OBSERVATION_BACKED` vs.
+   `VERIFIED_EVIDENCE_AND_KERNEL`).
 4. **Lean backend:** checks the emitted conditional proof. Observational
    premises are authenticated hypotheses; Lean does not measure or authenticate
    the real environment.
@@ -105,6 +110,19 @@ access fact and no negative axiom. The exact frozen target is
 `access ∧ (live ∧ (0 ≤ extent ∧ (0 < width ∧ violation)))` with
 `extent < offset + width` (upper) or `offset < 0` (lower) for a positive-width
 half-open access interval.
+
+Two producers instantiate this contract. `controlled-c-asan-v1` derives the
+facts from the reviewed fixture's alloc/attempt/asan event streams; scope is
+`<run>/<execution>/O1/g1/A1`. `cybergym-asan-v1` derives them from one
+machine ASan callback event captured in a pinned CyberGym image; scope is
+`<run>/<task>/<execution>/<poc_sha256>/O1/g1/A1`, `offset = address -
+region_base` in mathematical integers, and `live` means the callback
+classified the report exactly as `heap-buffer-overflow` over a positive-size
+heap region located by `__asan_locate_address`. Direct-mode emissions under
+either producer cite evidence delivered before the *narration* they
+translate; abstained arguments are `UNSUPPORTED_TRANSLATION`, never
+fabricated proofs. The nine rules, step shapes, and kernel boundary are
+producer-independent.
 
 ## Correctness claim
 
