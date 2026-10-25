@@ -135,6 +135,7 @@ own provider subscriptions from an eval kernel cell:
 ```python
 from soundtrace_live.corpus import load_corpus
 from soundtrace_live.harness import run_on_harness
+corpus = load_corpus('corpora/cybergym_run_set.json')
 result = await run_on_harness(corpus, 'arvo:64574', 'level1',
     work_dir='/tmp/cg-runset', key_path='/tmp/runner.key',
     lean=LEAN, out_dir='/tmp/harness-runs', deadline_s=600,
