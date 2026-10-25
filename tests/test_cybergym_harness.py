@@ -10,9 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from soundtrace_live.harness import HarnessClient, TOOL_ACTION_SCHEMA
+from soundtrace_live.harness import (HarnessClient, TaskAgentClient,
+                                     TOOL_ACTION_SCHEMA)
 from soundtrace_live.openai_responses import ApiError
-
 TARGET_TOOLS = [{'type': 'function', 'name': 'shell', 'description': 'x',
                  'parameters': {'type': 'object'}}]
 SCHEMA = {'type': 'object', 'additionalProperties': False,
@@ -199,6 +199,116 @@ class RunOnHarnessTests(unittest.TestCase):
         import soundtrace_live.harness as harness
         with self.assertRaises(ValueError):
             asyncio.run(harness.run_on_harness(
+                None, 't', 'level1', work_dir='/w', key_path='/k',
+                lean='/l', out_dir='/o'))
+
+
+class TaskAgentClientTests(unittest.TestCase):
+    ACTION = {'tool': 'shell', 'arguments': {'command': 'ls'},
+              'reasoning_chunk': 'listing'}
+
+    def test_action_capture_round_trip(self):
+        seen = []
+
+        def spawn(agent, prompt):
+            seen.append((agent, prompt))
+            return dict(self.ACTION)
+
+        client = TaskAgentClient(spawn, 'pilot', 'action')
+        self.assertEqual(client.list_models(), ['agent:pilot'])
+        response = client.create(
+            model='agent:pilot',
+            input_items=[
+                {'role': 'system', 'content': 'session contract'},
+                {'role': 'user', 'content': 'Begin.'},
+                {'type': 'function_call_output', 'call_id': 'c1',
+                 'output': '{"exit_code": 0}'}],
+            tools=[{'type': 'function', 'name': 'shell'}])
+        self.assertEqual(response['model'], 'agent:pilot')
+        self.assertEqual(response['usage'],
+                         {'input_tokens': 0, 'output_tokens': 0})
+        call = response['output'][0]
+        self.assertEqual(call['name'], 'shell')
+        arguments = json.loads(call['arguments'])
+        self.assertEqual(arguments['command'], 'ls')
+        self.assertEqual(arguments['reasoning_chunk'], 'listing')
+        # The audited prompt is delivered verbatim as the task text.
+        agent, prompt = seen[0]
+        self.assertEqual(agent, 'pilot')
+        self.assertIn('[session contract]\nsession contract', prompt)
+        self.assertIn('[transcript]', prompt)
+        self.assertIn('[tool result c1]', prompt)
+        self.assertIn('[next step]', prompt)
+
+    def test_translation_capture_round_trip(self):
+        payload = {'kind': 'noop', 'diagnostic': 'x'}
+        client = TaskAgentClient(lambda a, p: payload, 'translator',
+                                 'translation')
+        response = client.create(
+            model='agent:translator',
+            input_items=[{'role': 'system', 'content': 'translator prompt'},
+                         {'role': 'user', 'content': '## chunk'}],
+            text_json_schema={'type': 'object'})
+        item = response['output'][0]
+        self.assertEqual(item['type'], 'message')
+        self.assertEqual(json.loads(item['content'][0]['text']), payload)
+
+    def test_kind_validation_and_failures(self):
+        with self.assertRaises(ValueError):
+            TaskAgentClient(lambda a, p: {}, 'pilot', 'bogus')
+        client = TaskAgentClient(lambda a, p: (_ for _ in ()).throw(
+            RuntimeError('dead')), 'pilot', 'action')
+        with self.assertRaises(ApiError) as ctx:
+            client.create(model='agent:pilot',
+                          input_items=[{'role': 'user', 'content': 'x'}],
+                          tools=[{'type': 'function', 'name': 'shell'}])
+        self.assertEqual(ctx.exception.reason, 'SERVER')
+        bad = TaskAgentClient(lambda a, p: {'tool': 'shell'}, 'pilot',
+                              'action')
+        with self.assertRaises(ApiError) as ctx:
+            bad.create(model='agent:pilot',
+                       input_items=[{'role': 'user', 'content': 'x'}],
+                       tools=[{'type': 'function', 'name': 'shell'}])
+        self.assertEqual(ctx.exception.reason, 'MALFORMED')
+
+    def test_run_on_harness_agents_driver(self):
+        import soundtrace_live.harness as harness
+        import soundtrace_live.orchestrator as orch
+
+        ran = []
+
+        def fake_run_task(*args, **kwargs):
+            ran.append(kwargs)
+            factory = kwargs['client_factory']
+            self.assertEqual(factory('agent').list_models(),
+                             ['agent:pilot'])
+            self.assertEqual(factory('agent-translator').list_models(),
+                             ['agent:translator'])
+            return {'session_status': 'SENTINEL'}
+
+        saved = orch.run_task
+        orch.run_task = fake_run_task
+        try:
+            namespace = {'agent_spawn': lambda a, p: {'kind': 'noop'},
+                         'run_on_harness_agents':
+                             harness.run_on_harness_agents,
+                         'asyncio': asyncio}
+            exec('result = asyncio.run(run_on_harness_agents(\n'
+                 '    None, "arvo:64574", "level1", work_dir="/w",\n'
+                 '    key_path="/k", lean="/l", out_dir="/o"))\n',
+                 namespace)
+        finally:
+            orch.run_task = saved
+        self.assertEqual(namespace['result'],
+                         {'session_status': 'SENTINEL'})
+        self.assertEqual(ran[0]['target_chain'], [('agent', 'agent:pilot')])
+        self.assertEqual(ran[0]['translator_chain'],
+                         [('agent-translator', 'agent:translator')])
+
+    def test_run_on_harness_agents_requires_spawner(self):
+        import soundtrace_live.harness as harness
+        with self.assertRaises(ValueError):
+            asyncio.run(harness.run_on_harness_agents(
                 None, 't', 'level1', work_dir='/w', key_path='/k',
                 lean='/l', out_dir='/o'))
 

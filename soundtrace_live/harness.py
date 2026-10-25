@@ -206,6 +206,137 @@ class HarnessClient:
                 'usage': {'input_tokens': 0, 'output_tokens': 0}}
 
 
+class TaskAgentClient:
+    """Pipeline client surface over a one-shot named harness agent.
+
+    Each create() spawns a single subagent (``agent=<name>``) whose only
+    tool is a kernel-hosted capture stub; the agent's one tool call is the
+    model response. The orchestrator's audited prompt is delivered verbatim
+    as the task text, so signed provenance matches what the model saw.
+    """
+
+    def __init__(self, spawn: Callable[[str, str], dict], agent: str,
+                 kind: str):
+        if kind not in ('action', 'translation'):
+            raise ValueError("kind must be 'action' or 'translation'")
+        self._spawn = spawn
+        self._agent = agent
+        self._kind = kind
+        self._label = f'agent:{agent}'
+        self._call_ids = 0
+        self._timeout = 900.0     # attribute parity with call_target
+
+    def list_models(self) -> list[str]:
+        return [self._label]
+
+    def create(self, *, model: str, input_items: list,
+               tools: list | None = None,
+               tool_choice: str | dict | None = None,
+               reasoning_effort: str | None = None,
+               max_output_tokens: int | None = None,
+               include_encrypted_reasoning: bool = False,
+               text_json_schema: dict | None = None,
+               parallel_tool_calls: bool | None = None,
+               extra_body: dict | None = None) -> dict:
+        del tool_choice, reasoning_effort, max_output_tokens, extra_body
+        del include_encrypted_reasoning, parallel_tool_calls
+        system = None
+        rest = list(input_items)
+        if rest and isinstance(rest[0], dict) and rest[0].get('role') == \
+                'system':
+            system = rest[0].get('content')
+            if not isinstance(system, str):
+                raise ApiError('MALFORMED',
+                               'agent bridge: system content must be text')
+            rest = rest[1:]
+        transcript = _history_text(rest)
+        prompt = ''
+        if system is not None:
+            prompt += f'[session contract]\n{system}\n\n'
+        if transcript:
+            prompt += f'[transcript]\n{transcript}\n\n'
+        prompt += ('[next step]\nSubmit exactly one action or translation '
+                   'via your tool, then stop.')
+        try:
+            captured = self._spawn(self._agent, prompt)
+        except ApiError:
+            raise
+        except Exception as exc:
+            raise ApiError('SERVER',
+                           f'agent spawn failed: {type(exc).__name__}: '
+                           f'{exc}') from None
+        if not isinstance(captured, dict):
+            raise ApiError('MALFORMED',
+                           'agent bridge: captured payload was not an object')
+        if self._kind == 'action':
+            if not (isinstance(captured.get('tool'), str)
+                    and isinstance(captured.get('arguments'), dict)
+                    and isinstance(captured.get('reasoning_chunk'), str)):
+                raise ApiError('MALFORMED',
+                               'agent bridge: captured action was not a '
+                               'valid tool call')
+            arguments = dict(captured['arguments'])
+            arguments['reasoning_chunk'] = captured['reasoning_chunk']
+            self._call_ids += 1
+            call_id = f'a{self._call_ids}'
+            return {'id': call_id, 'model': self._label,
+                    'status': 'completed',
+                    'output': [{'type': 'function_call',
+                                'call_id': call_id,
+                                'name': captured['tool'],
+                                'arguments': json.dumps(arguments)}],
+                    'usage': {'input_tokens': 0, 'output_tokens': 0}}
+        return {'id': 'at', 'model': self._label, 'status': 'completed',
+                'output': [{'type': 'message', 'content': [
+                    {'type': 'output_text',
+                     'text': json.dumps(captured,
+                                        separators=(',', ':'))}]}],
+                'usage': {'input_tokens': 0, 'output_tokens': 0}}
+
+
+def run_on_harness_agents(corpus, task_id: str, difficulty: str, *,
+                          work_dir, key_path, lean, out_dir,
+                          deadline_s: float = 1200.0,
+                          target_agent: str = 'pilot',
+                          translator_agent: str = 'translator',
+                          spawn: Callable[[str, str], dict] | None = None,
+                          corpus_path=None) -> Any:
+    """Awaitable run_task over named harness agents (no API keys).
+
+    Requires the pilot/translator agent definitions (see
+    soundtrace_live/agents/) installed in ~/.omp/agent/agents/ and model
+    roles mapped in config.yml (or task.agentModelOverrides). ``spawn``
+    (agent_name, prompt) -> captured payload must run the one-shot subagent
+    with the matching capture tool; the eval-kernel reference spawner is
+    shown in README. Resolved from the caller's globals when omitted.
+    """
+    import sys
+    if spawn is None:
+        frame = sys._getframe(1)
+        spawn = frame.f_globals.get('agent_spawn') if frame else None
+    if spawn is None:
+        raise ValueError('pass the kernel spawner explicitly '
+                         '(agent_spawn(agent, prompt) -> captured dict), or '
+                         'call this from a kernel cell that defines it')
+    client_factory = _agent_client_factory(spawn, target_agent,
+                                           translator_agent)
+    return _drive(corpus, task_id, difficulty, work_dir=work_dir,
+                  key_path=key_path, lean=lean, out_dir=out_dir,
+                  deadline_s=deadline_s,
+                  target_chain=[('agent', f'agent:{target_agent}')],
+                  translator_chain=[('agent-translator',
+                                     f'agent:{translator_agent}')],
+                  client_factory=client_factory, corpus_path=corpus_path)
+
+
+def _agent_client_factory(spawn, target_agent, translator_agent):
+    def client_factory(provider: str):
+        if provider == 'agent-translator':
+            return TaskAgentClient(spawn, translator_agent, 'translation')
+        return TaskAgentClient(spawn, target_agent, 'action')
+    return client_factory
+
+
 def run_on_harness(corpus, task_id: str, difficulty: str, *,
                    work_dir, key_path, lean, out_dir,
                    deadline_s: float = 1200.0,
@@ -247,6 +378,23 @@ def run_on_harness(corpus, task_id: str, difficulty: str, *,
                            completion=completion, corpus_path=corpus_path)
 
 
+async def _drive(corpus, task_id: str, difficulty: str, *,
+                 work_dir, key_path, lean, out_dir, deadline_s: float,
+                 target_chain, translator_chain, client_factory,
+                 corpus_path=None) -> Any:
+    """Async core: run_task on a worker thread with the given clients."""
+    import asyncio
+    from pathlib import Path
+    from soundtrace_live.orchestrator import run_task
+    return await asyncio.to_thread(
+        run_task, corpus, task_id, difficulty,
+        work_dir=Path(work_dir), key_path=Path(key_path), lean=lean,
+        out_dir=Path(out_dir),
+        target_chain=target_chain, translator_chain=translator_chain,
+        client_factory=client_factory, deadline_s=deadline_s,
+        corpus_path=Path(corpus_path) if corpus_path else None)
+
+
 async def _run_on_harness(corpus, task_id: str, difficulty: str, *,
                           work_dir, key_path, lean, out_dir,
                           deadline_s: float, target_role: str,
@@ -256,8 +404,6 @@ async def _run_on_harness(corpus, task_id: str, difficulty: str, *,
     import asyncio
     import contextvars
     import inspect
-    from pathlib import Path
-    from soundtrace_live.orchestrator import run_task
     loop = asyncio.get_event_loop()
     # asyncio.to_thread propagates this context into the run thread, but the
     # translator worker starts a raw thread without it; schedule every
@@ -287,11 +433,11 @@ async def _run_on_harness(corpus, task_id: str, difficulty: str, *,
             else target_role
         return HarnessClient(sync_completion, role=role)
 
-    return await asyncio.to_thread(
-        run_task, corpus, task_id, difficulty,
-        work_dir=Path(work_dir), key_path=Path(key_path), lean=lean,
-        out_dir=Path(out_dir),
-        target_chain=[('omp', f'omp:{target_role}')],
-        translator_chain=[('omp-translator', f'omp:{translator_role}')],
-        client_factory=client_factory, deadline_s=deadline_s,
-        corpus_path=Path(corpus_path) if corpus_path else None)
+    return await _drive(corpus, task_id, difficulty, work_dir=work_dir,
+                        key_path=key_path, lean=lean, out_dir=out_dir,
+                        deadline_s=deadline_s,
+                        target_chain=[('omp', f'omp:{target_role}')],
+                        translator_chain=[('omp-translator',
+                                           f'omp:{translator_role}')],
+                        client_factory=client_factory,
+                        corpus_path=corpus_path)

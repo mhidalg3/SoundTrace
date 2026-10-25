@@ -151,6 +151,79 @@ reported as zero because the subscription transport exposes no counts.
 Verified live: real target turns + translator calls on subscription quota,
 signed HMAC bundle published, provider `omp` recorded in audits.
 
+Named-agent runs (no API keys, task-specific agents): `run_on_harness_agents`
+drives the pipeline through two named harness agents — `pilot` (target) and
+`translator` — defined in `soundtrace_live/agents/` (install copies in
+`~/.omp/agent/agents/`). Each definition carries its own scope/limits and a
+`model: "@pilot"` / `"@translator"` role, so you map the model per agent in
+`config.yml` (or `task.agentModelOverrides.pilot/.translator`) — e.g.
+`@pilot → zai/glm-5.3:high`, `@translator → kimi-code/k3.1-pro:high`.
+
+The orchestrator keeps its full audited loop: per turn it calls a `spawn`
+you supply, which runs the matching one-shot agent whose single
+kernel-hosted capture tool records the action; the orchestrator executes it
+in the real sandbox and feeds the observation back. `run_on_harness_agents`
+runs `run_task` on a worker thread, so the spawner schedules the async
+`tool.task` back onto the kernel loop and polls the capture box (fresh per
+call, so concurrent target/translator spawns never collide):
+
+```python
+import asyncio, contextvars
+from soundtrace_live.corpus import load_corpus
+from soundtrace_live.harness import run_on_harness_agents
+
+_loop = asyncio.get_event_loop()
+_ctx = contextvars.copy_context()
+
+async def _spawn_async(agent, prompt):
+    box = {}
+    if agent == 'translator':
+        def capture(kind: str, id=None, steps=None,
+                    diagnostic=None, reason=None) -> str:
+            box['p'] = {'kind': kind, 'id': id, 'steps': steps,
+                        'diagnostic': diagnostic, 'reason': reason}
+            return 'RECORDED — reply with exactly DONE.'
+    else:
+        def capture(tool: str, arguments: dict, reasoning_chunk: str) -> str:
+            box['p'] = {'tool': tool, 'arguments': arguments,
+                        'reasoning_chunk': reasoning_chunk}
+            return 'RECORDED — reply with exactly DONE.'
+    name = f'capture_{id(box)}'
+    tool(capture, name=name)
+    try:
+        await tool.task(context='SoundTrace pipeline step.',
+                        tasks=[{'agent': agent, 'task': prompt,
+                                'tools': [name]}])
+        for _ in range(300):          # poll until the agent calls its tool
+            if 'p' in box:
+                break
+            await asyncio.sleep(1)
+    finally:
+        tool.undefine(name)
+    return box.get('p')
+
+def agent_spawn(agent, prompt):
+    fut = _ctx.copy().run(asyncio.run_coroutine_threadsafe,
+                          _spawn_async(agent, prompt), _loop)
+    return fut.result(timeout=900)
+
+corpus = load_corpus('corpora/cybergym_run_set.json')
+result = await run_on_harness_agents(corpus, 'arvo:64574', 'level1',
+    work_dir='/tmp/cg-runset', key_path='/tmp/runner.key', lean=LEAN,
+    out_dir='/tmp/agent-runs', deadline_s=600,
+    corpus_path='corpora/cybergym_run_set.json')
+```
+
+`spawn` defaults to the caller's `agent_spawn` global. Verified separately:
+(1) a one-shot subagent calls its kernel capture tool and the payload is
+captured; (2) scripted agent payloads drive a full session through the
+orchestrator to a signed HMAC bundle with provider `agent` in the audit
+trail, secret scan clean. **Not yet run end to end with a real model**: the
+`@pilot`/`@translator` roles must be mapped in `config.yml` first — until
+then both agents fall back to the generic `task` role, whose small local
+context overflows. Map the roles, then run the canary above once and
+confirm a signed bundle before a campaign.
+
 Result vocabulary (never collapsed): session status is one of `COMPLETED`,
 `AGENT_REPORTED_NONE`, `AGENT_BUDGET_EXHAUSTED`, `INCONCLUSIVE_SETUP`,
 `INCONCLUSIVE_MODEL_ACCESS`, `INCONCLUSIVE_MODEL_API`,
