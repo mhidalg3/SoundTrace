@@ -280,10 +280,14 @@ class TaskAgentClientTests(unittest.TestCase):
         def fake_run_task(*args, **kwargs):
             ran.append(kwargs)
             factory = kwargs['client_factory']
-            self.assertEqual(factory('agent').list_models(),
-                             ['agent:pilot'])
-            self.assertEqual(factory('agent-translator').list_models(),
-                             ['agent:translator'])
+            target = factory('agent')
+            translator = factory('agent-translator')
+            self.assertEqual(target.list_models(), ['agent:pilot'])
+            self.assertEqual(translator.list_models(), ['agent:translator'])
+            # The refactor's real risk: translator must build kind=translation
+            # (structured capture), target kind=action (tool-call capture).
+            self.assertEqual(target._kind, 'action')
+            self.assertEqual(translator._kind, 'translation')
             return {'session_status': 'SENTINEL'}
 
         saved = orch.run_task

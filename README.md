@@ -190,17 +190,30 @@ async def _spawn_async(agent, prompt):
             return 'RECORDED — reply with exactly DONE.'
     name = f'capture_{id(box)}'
     tool(capture, name=name)
+    job_id = None
     try:
-        await tool.task(context='SoundTrace pipeline step.',
-                        tasks=[{'agent': agent, 'task': prompt,
-                                'tools': [name]}])
+        ack = await tool.task(context='SoundTrace pipeline step.',
+                              tasks=[{'agent': agent, 'task': prompt,
+                                      'tools': [name]}])
+        job_id = (ack.get('details', {}).get('async', {}).get('jobId')
+                  if isinstance(ack, dict) else None)
         for _ in range(300):          # poll until the agent calls its tool
             if 'p' in box:
                 break
             await asyncio.sleep(1)
     finally:
+        # Cancel the one-shot on every exit path: on capture so it cannot
+        # take a second action, on timeout/error so it is not left running.
+        if job_id:
+            try:
+                write(f'proc://{job_id}/kill')
+            except Exception:
+                pass
         tool.undefine(name)
-    return box.get('p')
+    if 'p' not in box:
+        raise RuntimeError(f'agent {agent!r} produced no captured action '
+                           'before the spawn deadline')
+    return box['p']
 
 def agent_spawn(agent, prompt):
     fut = _ctx.copy().run(asyncio.run_coroutine_threadsafe,
