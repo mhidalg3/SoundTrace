@@ -86,10 +86,12 @@ class ProtocolError(Exception):
 
 
 class _Session:
-    def __init__(self, key: bytes, out_path: Path, backend=None):
+    def __init__(self, key: bytes, out_path: Path, backend=None,
+                 target_build: str = 'vul'):
         self.key = key
         self.out_path = out_path
         self.backend = backend   # None → fixture backend; else CyberGym capture
+        self.target_build = target_build
         self.seq = 0
         self.trace: list[dict] = []
         self.executions: list[dict] = []
@@ -559,10 +561,10 @@ class _Session:
         try:
             execution = self.backend.execute_probe(
                 task_id, poc_sha256, execution_id,
-                host_timeout=min(30.0, timeout_s))
+                host_timeout=min(30.0, timeout_s), build=self.target_build)
             require(isinstance(execution, dict),
                     'probe backend returned a non-object execution')
-            self.backend.validate_execution(execution)
+            self.backend.validate_execution(execution, build=self.target_build)
             cybergym_validate_execution(execution)
             require(execution.get('id') == execution_id
                     and execution.get('task_id') == task_id
@@ -823,6 +825,8 @@ class _Session:
             'trace': self.trace,
             'claims': self.claims,
         }
+        if self.is_cybergym:
+            payload['target_build'] = self.target_build
         bundle = {'payload': payload, 'hmac_sha256': mac_hex(self.key,
                                                              canonical_json(payload))}
         serialized = canonical_json(bundle) + b'\n'
@@ -1110,11 +1114,17 @@ def validate_bundle(bundle: Any) -> dict:
             and re.fullmatch(r'[0-9a-f]{64}', bundle['hmac_sha256']), 'bundle MAC format')
     payload = bundle['payload']
     require(isinstance(payload, dict), 'payload must be an object')
-    require(set(payload) == {'format', 'run_id', 'producer', 'build', 'executions',
-                             'trace', 'claims'}, 'payload keys')
+    require('format' in payload and isinstance(payload['format'], str),
+            'payload must carry a string format')
+    _base_keys = {'format', 'run_id', 'producer', 'build', 'executions',
+                  'trace', 'claims'}
     if payload['format'] == CYBERGYM_FORMAT:
+        require(set(payload) == _base_keys | {'target_build'}, 'payload keys')
         require(payload['producer'] == CYBERGYM_AUTHORITY, 'bundle producer')
+        require(payload['target_build'] in ('vul', 'fix'),
+                'payload target_build must be vul or fix')
         return _validate_cybergym_bundle(bundle, payload)
+    require(set(payload) == _base_keys, 'payload keys')
     require(payload['format'] == BUNDLE_FORMAT, 'bundle format')
     require(payload['producer'] == AUTHORITY, 'bundle producer')
     require(isinstance(payload['run_id'], str)
@@ -1198,6 +1208,7 @@ def validate_bundle(bundle: Any) -> dict:
 
 def _validate_cybergym_bundle(bundle: dict, payload: dict) -> dict:
     """Exact schemas for `soundtrace-cybergym-run-v1` bundles."""
+    target_build = payload['target_build']
     require(isinstance(payload['run_id'], str)
             and re.fullmatch(r'R[0-9a-f]{32}', payload['run_id']), 'run id format')
     build = payload['build']
@@ -1248,8 +1259,9 @@ def _validate_cybergym_bundle(bundle: dict, payload: dict) -> dict:
         seen_ids.add(execution['id'])
         task_entry = tasks.get(execution['task_id'])
         require(task_entry is not None, 'execution names a task outside the build')
-        cybergym_validate_execution(execution, task_entry)
-        require(execution['image_digest'] == task_entry['vul_digest'],
+        cybergym_validate_execution(execution, task_entry, build=target_build)
+        require(execution['image_digest'] == task_entry[
+            'vul_digest' if target_build == 'vul' else 'fix_digest'],
                 'execution image digest differs from the pinned build digest')
     execution_by_id = {execution['id']: execution for execution in executions}
     trace = payload['trace']
@@ -1352,9 +1364,10 @@ def keygen(out_path: Path) -> int:
 
 def record(key_path: Path, out_path: Path, *, backend_name: str = 'fixture',
            corpus_path: Path | None = None, work_dir: Path | None = None,
-           artifacts_dir: Path | None = None) -> int:
+           artifacts_dir: Path | None = None, target_build: str = 'vul') -> int:
     key = key_path.read_bytes()
     require(len(key) == KEY_SIZE, 'runner key must be 32 bytes')
+    require(target_build in ('vul', 'fix'), 'build must be vul or fix')
     backend = None
     if backend_name == 'cybergym':
         require(corpus_path is not None, 'cybergym recording requires --corpus')
@@ -1371,7 +1384,8 @@ def record(key_path: Path, out_path: Path, *, backend_name: str = 'fixture',
         backend = CybergymBackend(corpus, work_dir, artifacts_dir=artifacts_dir)
     elif backend_name != 'fixture':
         raise Rejected(f'unknown backend {backend_name!r}')
-    session = _Session(key, out_path, backend=backend)
+    session = _Session(key, out_path, backend=backend,
+                       target_build=target_build)
     status = 0
     while True:
         raw = sys.stdin.buffer.readline(LINE_BYTE_LIMIT + 1)  # bounded before decoding
@@ -1418,13 +1432,15 @@ def main() -> int:
     record_parser.add_argument('--corpus', type=Path)
     record_parser.add_argument('--work-dir', type=Path)
     record_parser.add_argument('--artifacts', type=Path)
+    record_parser.add_argument('--build', choices=('vul', 'fix'),
+                               default='vul')
     args = parser.parse_args()
     try:
         if args.command == 'keygen':
             return keygen(args.out)
         return record(args.key, args.out, backend_name=args.backend,
                       corpus_path=args.corpus, work_dir=args.work_dir,
-                      artifacts_dir=args.artifacts)
+                      artifacts_dir=args.artifacts, target_build=args.build)
     except ProtocolError as exc:
         print(json.dumps({'status': 'REJECTED', 'reason': exc.reason,
                           'diagnostic': exc.diagnostic}), file=sys.stderr)

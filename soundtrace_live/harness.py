@@ -300,7 +300,7 @@ def run_on_harness_agents(corpus, task_id: str, difficulty: str, *,
                           target_agent: str = 'pilot',
                           translator_agent: str = 'translator',
                           spawn: Callable[[str, str], dict] | None = None,
-                          corpus_path=None) -> Any:
+                          corpus_path=None, target_build: str = 'vul') -> Any:
     """Awaitable run_task over named harness agents (no API keys).
 
     Requires the pilot/translator agent definitions (see
@@ -326,7 +326,8 @@ def run_on_harness_agents(corpus, task_id: str, difficulty: str, *,
                   target_chain=[('agent', f'agent:{target_agent}')],
                   translator_chain=[('agent-translator',
                                      f'agent:{translator_agent}')],
-                  client_factory=client_factory, corpus_path=corpus_path)
+                  client_factory=client_factory, corpus_path=corpus_path,
+                  target_build=target_build)
 
 
 def _agent_client_factory(spawn, target_agent, translator_agent):
@@ -343,7 +344,7 @@ def run_on_harness(corpus, task_id: str, difficulty: str, *,
                    target_role: str = 'default',
                    translator_role: str = 'default',
                    completion: Callable[..., Any] | None = None,
-                   corpus_path=None) -> Any:
+                   corpus_path=None, target_build: str = 'vul') -> Any:
     """Awaitable run_task over harness-subscription clients (no API keys).
 
     Call from the harness eval kernel:
@@ -375,13 +376,14 @@ def run_on_harness(corpus, task_id: str, difficulty: str, *,
                            out_dir=out_dir, deadline_s=deadline_s,
                            target_role=target_role,
                            translator_role=translator_role,
-                           completion=completion, corpus_path=corpus_path)
+                           completion=completion, corpus_path=corpus_path,
+                           target_build=target_build)
 
 
 async def _drive(corpus, task_id: str, difficulty: str, *,
                  work_dir, key_path, lean, out_dir, deadline_s: float,
                  target_chain, translator_chain, client_factory,
-                 corpus_path=None) -> Any:
+                 corpus_path=None, target_build: str = 'vul') -> Any:
     """Async core: run_task on a worker thread with the given clients."""
     import asyncio
     from pathlib import Path
@@ -392,14 +394,15 @@ async def _drive(corpus, task_id: str, difficulty: str, *,
         out_dir=Path(out_dir),
         target_chain=target_chain, translator_chain=translator_chain,
         client_factory=client_factory, deadline_s=deadline_s,
-        corpus_path=Path(corpus_path) if corpus_path else None)
+        corpus_path=Path(corpus_path) if corpus_path else None,
+        target_build=target_build)
 
 
 async def _run_on_harness(corpus, task_id: str, difficulty: str, *,
                           work_dir, key_path, lean, out_dir,
                           deadline_s: float, target_role: str,
                           translator_role: str, completion: Callable[..., Any],
-                          corpus_path=None) -> Any:
+                          corpus_path=None, target_build: str = 'vul') -> Any:
     """Async driver body; `completion` is resolved by the sync wrapper."""
     import asyncio
     import contextvars
@@ -440,4 +443,4 @@ async def _run_on_harness(corpus, task_id: str, difficulty: str, *,
                         translator_chain=[('omp-translator',
                                            f'omp:{translator_role}')],
                         client_factory=client_factory,
-                        corpus_path=corpus_path)
+                        corpus_path=corpus_path, target_build=target_build)

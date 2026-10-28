@@ -321,21 +321,34 @@ class Translator:
         return '\n'.join(lines)
 
     def _call_model(self, chunk: _Chunk) -> str:
-        from soundtrace_live.openai_responses import ApiError
+        from soundtrace_live.openai_responses import ApiError, retry_transient
         client = self.client_factory()
-        if self._remaining is not None:
-            remaining = self._remaining()
-            if remaining <= 0:
-                raise ApiError('TIMEOUT', 'translator task deadline expired')
-            if hasattr(client, '_timeout'):
-                client._timeout = min(float(client._timeout), remaining)
-        response = client.create(
-            model=self.model,
-            input_items=[{'role': 'system', 'content': self.system_prompt},
-                         {'role': 'user', 'content': self._user_message(chunk)}],
-            reasoning_effort=REASONING_EFFORT,
-            max_output_tokens=MAX_OUTPUT_TOKENS,
-            text_json_schema=OUTPUT_SCHEMA)
+        if self._remaining is not None and self._remaining() <= 0:
+            raise ApiError('TIMEOUT', 'translator task deadline expired')
+
+        def _create():
+            # Re-clamp to current remaining each attempt (bounded retries).
+            if self._remaining is not None:
+                rem = self._remaining()
+                if rem <= 0:
+                    raise ApiError('TIMEOUT',
+                                   'translator task deadline expired')
+                if hasattr(client, '_timeout'):
+                    client._timeout = min(float(client._timeout), rem)
+            return client.create(
+                model=self.model,
+                input_items=[{'role': 'system', 'content': self.system_prompt},
+                             {'role': 'user',
+                              'content': self._user_message(chunk)}],
+                reasoning_effort=REASONING_EFFORT,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                text_json_schema=OUTPUT_SCHEMA)
+
+        response = retry_transient(
+            _create, remaining=self._remaining or (lambda: 1e9))
+        if isinstance(response, dict) and response.get('status') == 'refusal':
+            raise ApiError('REFUSAL', 'translator model refused the task '
+                           '(provider policy)')
         if (not isinstance(response, dict)
                 or not isinstance(response.get('model'), str)
                 or not response['model']):
@@ -388,6 +401,9 @@ class Translator:
         if kind == 'emit':
             require(isinstance(document.get('id'), str)
                     and ID_RE.fullmatch(document['id']), 'emission id')
+            require(document['id'] not in self.emission_ids,
+                    'emission id already used; ids must be unique within '
+                    'the argument')
             validate_emission_steps(document['steps'],
                                     emitted_formulas=self.emitted_formulas,
                                     evidence=chunk.evidence,

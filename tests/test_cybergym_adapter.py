@@ -144,6 +144,40 @@ class ValidateExecutionTests(unittest.TestCase):
             ca.validate_execution(execution(exit_code=1, events=[]))
 
 
+class BuildPinningTests(unittest.TestCase):
+    """target_build selects which pinned image an execution must match;
+    an execution recorded against one build is never admissible for the
+    other (authorization, not mere digest provenance)."""
+    TASK_ENTRY = {
+        'kind': 'arvo', 'project': 'freetype2',
+        'vul_ref': 'n132/arvo:368-vul@sha256:' + 'b' * 64,
+        'vul_digest': DIGEST,
+        'fix_ref': 'n132/arvo:368-fix@sha256:' + 'c' * 64,
+        'fix_digest': 'sha256:' + 'c' * 64,
+        'command_vul': ['/bin/arvo'],
+        'archive_sha256': '6' * 64, 'description_sha256': '7' * 64,
+    }
+
+    def fix_execution(self, **over):
+        return execution(image_ref=self.TASK_ENTRY['fix_ref'],
+                         image_digest=self.TASK_ENTRY['fix_digest'], **over)
+
+    def test_vul_execution_admitted_under_vul_build(self):
+        ca.validate_execution(execution(), self.TASK_ENTRY, build='vul')
+
+    def test_fix_execution_admitted_under_fix_build(self):
+        ca.validate_execution(self.fix_execution(), self.TASK_ENTRY, build='fix')
+
+    def test_fix_execution_rejected_under_vul_build(self):
+        with self.assertRaises(Rejected):
+            ca.validate_execution(self.fix_execution(), self.TASK_ENTRY,
+                                  build='vul')
+
+    def test_vul_execution_rejected_under_fix_build(self):
+        with self.assertRaises(Rejected):
+            ca.validate_execution(execution(), self.TASK_ENTRY, build='fix')
+
+
 class FreezeTests(unittest.TestCase):
     def claim(self, frm='goal', **over):
         c = {'kind': 'claim', 'argument_id': 'C1', 'event': 'X1/A1',

@@ -95,7 +95,7 @@ HOOK_SOURCE = textwrap.dedent('''
             self.corpus = corpus
             self.calls = []
 
-        def validate_execution(self, execution):
+        def validate_execution(self, execution, build='vul'):
             return None
 
         def validate_build(self, build):
@@ -104,7 +104,7 @@ HOOK_SOURCE = textwrap.dedent('''
         def build_record(self):
             return _build()
         def execute_probe(self, task_id, poc_sha256, execution_id, *,
-                          host_timeout=30.0):
+                          host_timeout=30.0, build='vul'):
             self.calls.append((task_id, poc_sha256, execution_id))
             step = self.script.pop(0) if self.script else {{"mode": "ok"}}
             mode = step.get("mode", "ok")
@@ -135,6 +135,8 @@ class FakeClient:
         # Scripted availability failure for the final translation; consumed
         # once, then the call succeeds (models the chain switch test).
         self.fail_translator_on_final = None
+        self.fail_translator_times = 1   # raises this many times, then clears
+        self._translator_fails_done = 0
         self.provider = None        # set by provider-scoped factories
 
     def list_models(self):
@@ -163,10 +165,10 @@ class FakeClient:
             if isinstance(item, dict) and item.get('role') == 'user':
                 text = item.get('content', '')
         if self.fail_translator_on_final is not None \
-                and '## Final emission target' in text:
-            exc = self.fail_translator_on_final
-            self.fail_translator_on_final = None
-            raise exc
+                and '## Final emission target' in text \
+                and self._translator_fails_done < self.fail_translator_times:
+            self._translator_fails_done += 1
+            raise self.fail_translator_on_final
         self.translator_messages.append(text)
         raw = self.translator_fn(text)
         return {'output': [{'type': 'message', 'content': [
@@ -179,6 +181,37 @@ def default_translator(message: str) -> str:
     if '## Final emission target' in message:
         return json.dumps({'kind': 'emit', 'id': 'goal', 'steps': STEPS})
     return json.dumps({'kind': 'noop', 'diagnostic': 'exploratory'})
+
+
+class Refuser(FakeClient):
+    """Target client that returns a provider-policy refusal for the agent."""
+
+    def create(self, *, model, input_items, **kwargs):
+        if kwargs.get('max_output_tokens') == 16 and input_items == [
+                {'role': 'user', 'content': [
+                    {'type': 'input_text', 'text': 'ping'}]}]:
+            return {'output': [], 'model': model, 'status': 'completed',
+                    'usage': {'input_tokens': 1, 'output_tokens': 1}}
+        if model == TARGET:
+            return {'output': [], 'model': model, 'status': 'refusal',
+                    'usage': {'input_tokens': 1, 'output_tokens': 0}}
+        return super().create(model=model, input_items=input_items, **kwargs)
+
+
+class TranslatorRefuser(FakeClient):
+    """Translator client that refuses the primary translator model with a
+    provider-policy refusal, but serves any fallback model normally."""
+
+    def create(self, *, model, input_items, **kwargs):
+        if kwargs.get('max_output_tokens') == 16 and input_items == [
+                {'role': 'user', 'content': [
+                    {'type': 'input_text', 'text': 'ping'}]}]:
+            return {'output': [], 'model': model, 'status': 'completed',
+                    'usage': {'input_tokens': 1, 'output_tokens': 1}}
+        if model == TRANSLATOR:
+            return {'output': [], 'model': model, 'status': 'refusal',
+                    'usage': {'input_tokens': 1, 'output_tokens': 0}}
+        return super().create(model=model, input_items=input_items, **kwargs)
 
 
 def msg(text):
@@ -248,6 +281,10 @@ class OrchestratorTests(unittest.TestCase):
         self.hook_dir = self.tmp / 'hook'
         self.hook_dir.mkdir()
         (self.hook_dir / 'backend.py').write_text(HOOK_SOURCE)
+        import soundtrace_live.openai_responses as _oai
+        self._oai = _oai
+        self.addCleanup(setattr, _oai, '_sleep', _oai._sleep)
+        _oai._sleep = lambda _s: None   # never sleep for real in tests
 
     # ------------------------------------------------------------- driver
     def script(self, modes):
@@ -273,7 +310,8 @@ class OrchestratorTests(unittest.TestCase):
                  modes=('ok',), deadline_s=1200.0, benchmark_fn='default',
                  files=None, fail_preflight=None,
                  target_chain=None, translator_chain=None,
-                 client_factory=None, sandbox_factory=None):
+                 client_factory=None, sandbox_factory=None, model_retries=None,
+                 turn_limit=None):
         self.script(list(modes))
         client = FakeClient(turns, translator_fn=translator_fn, models=models)
         client.fail_preflight = fail_preflight
@@ -292,18 +330,27 @@ class OrchestratorTests(unittest.TestCase):
             kwargs['benchmark_fn'] = self.benchmark()
         elif benchmark_fn is not None:
             kwargs['benchmark_fn'] = benchmark_fn
+        if turn_limit is not None:
+            kwargs['turn_limit'] = turn_limit
         import soundtrace_live.orchestrator as orch
         previous = dict(os.environ)
         os.environ[HOOK_ENV] = str(self.hook_dir / 'backend.py')
         os.environ['SOUNDTRACE_TEST_HOOK'] = '1'
+        import contextlib
+        from unittest import mock
+        retry_ctx = (mock.patch.object(self._oai, 'RETRY_COUNT', model_retries)
+                     if model_retries is not None else contextlib.nullcontext())
         try:
-            result = run_task(CORPUS, TASK, 'level1', work_dir=self.work,
-                              key_path=self.key, lean=self.lean, out_dir=self.out,
-                              client_factory=client_factory,
-                              sandbox_factory=factory, deadline_s=deadline_s,
-                              session_label='S0123abcd',
-                              target_chain=target_chain,
-                              translator_chain=translator_chain, **kwargs)
+            with retry_ctx:
+                result = run_task(CORPUS, TASK, 'level1', work_dir=self.work,
+                                  key_path=self.key, lean=self.lean,
+                                  out_dir=self.out,
+                                  client_factory=client_factory,
+                                  sandbox_factory=factory,
+                                  deadline_s=deadline_s,
+                                  session_label='S0123abcd',
+                                  target_chain=target_chain,
+                                  translator_chain=translator_chain, **kwargs)
         finally:
             os.environ.clear()
             os.environ.update(previous)
@@ -346,8 +393,10 @@ class OrchestratorTests(unittest.TestCase):
             'translator_provider', 'translator_model',
             'resolved_target_model', 'resolved_translator_model',
             'evidence_ids', 'claim_id', 'execution_id', 'poc_sha256',
-            'session_status', 'turns', 'tokens', 'elapsed_s', 'task_id',
-            'difficulty', 'run_id', 'attempts'})
+            'session_status', 'turns', 'tokens', 'elapsed_s',
+            'cache_hit_rate', 'task_id',
+            'difficulty', 'target_build', 'probe_count', 'admissible_count',
+            'checker_status', 'run_id', 'attempts'})
         self.assertEqual(result['target_provider'], 'fake')
         self.assertEqual(result['translator_provider'], 'fake')
         self.assertEqual(len(result['attempts']), 1)
@@ -427,6 +476,23 @@ class OrchestratorTests(unittest.TestCase):
         # The misaligned second emission is rejected by the kernel boundary.
         self.assertEqual(result['session_status'], 'CHECKER_REJECTED')
 
+    def test_duplicate_emission_id_abstains_without_killing_runner(self):
+        # A live translator once re-used an emission id on the final chunk;
+        # the runner must never see that duplicate (it aborts the session).
+        # The uniqueness guard routes it into the repair/abstain path.
+        def translator(message):
+            if 'Probing my candidate PoC' in message:
+                return json.dumps({'kind': 'emit', 'id': 'e1', 'steps': [
+                    {'op': 'compute', 'formula': ['lt', 1, 2]}]})
+            if '## Final emission target' in message:
+                return json.dumps({'kind': 'emit', 'id': 'e1', 'steps': [
+                    {'op': 'compute', 'formula': ['lt', 3, 4]}]})
+            return default_translator(message)
+        result, _, _, _, _ = self.run_case(translator_fn=translator)
+        self.assertEqual(result['session_status'], 'UNSUPPORTED_TRANSLATION')
+        self.assertNotIn('runner subprocess',
+                         str(result.get('diagnostic')))
+
     def test_report_none_path(self):
         turns = [[msg('Nothing suspicious.'), call('c1', 'report_none',
                   reasoning_chunk='Final: no out-of-bounds access observed.')]]
@@ -452,7 +518,8 @@ class OrchestratorTests(unittest.TestCase):
                  for i in range(300)]
         result, _, bundle, _, _ = self.run_case(turns=turns)
         self.assertEqual(result['session_status'], 'AGENT_BUDGET_EXHAUSTED')
-        self.assertEqual(result['turns'], 100)
+        from soundtrace_live.orchestrator import TURN_LIMIT
+        self.assertEqual(result['turns'], TURN_LIMIT)
         self.assertIsNone(result['claim_id'])
         self.assertEqual(bundle['payload']['claims'], {})
 
@@ -583,8 +650,405 @@ class OrchestratorTests(unittest.TestCase):
         turns = [[msg('x'), call('c1', 'shell', reasoning_chunk='a',
                                  command='true')],
                  ApiError('RATE_LIMIT', 'slow down', 429)]
+        result, _, _, _, _ = self.run_case(turns=turns, model_retries=0)
+        self.assertEqual(result['session_status'], 'INCONCLUSIVE_PROVIDER')
+
+    def test_target_refusal_is_a_distinct_terminal_status(self):
+        client = Refuser(HAPPY_TURNS)
+        client.provider = 'fake'
+        result, _, _, _, _ = self.run_case(client_factory=lambda _p: client)
+        self.assertEqual(result['session_status'], 'PROVIDER_REFUSAL')
+
+    def test_refusal_falls_back_to_next_chain_entry(self):
+        def factory(provider):
+            c = (Refuser(HAPPY_TURNS) if provider == 'p1'
+                 else FakeClient(HAPPY_TURNS))
+            c.provider = provider
+            return c
+        result, _, _, _, _ = self.run_case(
+            modes=('ok', 'ok'),
+            target_chain=[('p1', TARGET), ('p2', TARGET)],
+            client_factory=factory)
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        self.assertEqual(result['target_provider'], 'p2')
+
+    def test_translator_refusal_is_a_distinct_terminal_status(self):
+        client = TranslatorRefuser(HAPPY_TURNS)
+        client.provider = 'fake'
+        result, _, _, _, _ = self.run_case(client_factory=lambda _p: client)
+        self.assertEqual(result['session_status'], 'PROVIDER_REFUSAL')
+
+    def test_translator_refusal_falls_back_to_next_chain_entry(self):
+        client = TranslatorRefuser(HAPPY_TURNS)
+        client.provider = 'p1'
+        result, _, _, _, _ = self.run_case(
+            translator_chain=[('p1', TRANSLATOR), ('p2', 'kimi-alt')],
+            client_factory=lambda _p: client)
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        self.assertEqual(result['translator_provider'], 'p2')
+
+    def test_target_transient_retry_recovers_without_fallback(self):
+        turns = [HAPPY_TURNS[0], ApiError('SERVER', 'blip', 500),
+                 HAPPY_TURNS[1], HAPPY_TURNS[2]]
         result, _, _, _, _ = self.run_case(turns=turns)
-        self.assertEqual(result['session_status'], 'INCONCLUSIVE_MODEL_API')
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        self.assertEqual(len(result['attempts']), 1)
+
+    def test_target_transient_retries_exhausted_is_inconclusive(self):
+        turns = [HAPPY_TURNS[0]] + [ApiError('SERVER', 'boom', 500)] * 3
+        result, _, _, _, _ = self.run_case(turns=turns)
+        self.assertEqual(result['session_status'], 'INCONCLUSIVE_PROVIDER')
+
+    def test_translator_transient_retry_recovers_without_switch(self):
+        client = FakeClient(HAPPY_TURNS)
+        client.provider = 'p1'
+        client.fail_translator_on_final = ApiError('SERVER', 'blip', 500)
+        result, _, _, _, _ = self.run_case(
+            translator_chain=[('p1', TRANSLATOR), ('p2', 'kimi-alt')],
+            client_factory=lambda _p: client)
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        self.assertEqual(result['translator_provider'], 'p1')
+
+
+    def test_transient_exhausts_retries_then_falls_back(self):
+        # Production default retries, then availability fallback to the next
+        # entry once the first entry's transient blips are exhausted.
+        def factory(provider):
+            if provider == 'p1':
+                c = FakeClient([HAPPY_TURNS[0]]
+                               + [ApiError('SERVER', 'b', 500)] * 3)
+            else:
+                c = FakeClient(HAPPY_TURNS)
+            c.provider = provider
+            return c
+        result, _, _, _, _ = self.run_case(
+            modes=('ok', 'ok'),
+            target_chain=[('p1', TARGET), ('p2', TARGET)],
+            client_factory=factory)
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        self.assertEqual(result['target_provider'], 'p2')
+        self.assertEqual(result['attempts'][0]['session_status'],
+                         'INCONCLUSIVE_PROVIDER')
+
+    def test_translator_retries_then_switches_after_exhaustion(self):
+        client = FakeClient(HAPPY_TURNS)
+        client.provider = 'p1'
+        client.fail_translator_on_final = ApiError('SERVER', 'boom', 500)
+        client.fail_translator_times = 3   # exhaust retries before switching
+        result, _, _, _, _ = self.run_case(
+            translator_chain=[('p1', TRANSLATOR), ('p2', 'kimi-alt')],
+            client_factory=lambda _p: client)
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        self.assertEqual(result['translator_provider'], 'p2')
+
+    def test_recorder_death_diagnostic_reports_exit_and_stderr(self):
+        from soundtrace_live.orchestrator import Broker, OrchestratorError
+        argv = [sys.executable, '-c',
+                'import sys; sys.stdin.readline(); '
+                'sys.stderr.write("boom-trace\\n"); sys.stderr.flush(); '
+                'sys.exit(7)']
+        broker = Broker(self.work / 'corpus.json', self.work, self.key,
+                        self.tmp / 'b.json',
+                        stderr_path=self.tmp / 'runner.stderr.log', argv=argv)
+        try:
+            with self.assertRaises(OrchestratorError) as cm:
+                broker.request({'kind': 'ping'})
+        finally:
+            broker.kill()
+        self.assertEqual(cm.exception.status, 'INCONCLUSIVE_CAPTURE')
+        self.assertIn('exit 7', cm.exception.diagnostic)
+        self.assertIn('boom-trace', cm.exception.diagnostic)
+
+    def test_unclamped_timeout_with_budget_is_provider_not_exhaustion(self):
+        # An un-clamped client/provider timeout that fires while task budget
+        # remains must be a transient provider failure (fallback-eligible),
+        # NOT budget exhaustion.  remaining() drops below the client timeout by
+        # classification time, which the old `remaining() < timeout` test
+        # mislabeled as exhaustion.
+        from unittest import mock
+        from soundtrace_live.orchestrator import _TaskRun, OrchestratorError
+        oai = self._oai
+        run = _TaskRun.__new__(_TaskRun)
+        rem = iter([2.0, 2.0, 0.5, 0.5])   # start 2.0 > 1.5 timeout: not clamped
+        run.remaining = lambda: next(rem)
+        run.target_model = 'x'
+
+        class Client:
+            _timeout = 1.5
+            def create(self, **kw):
+                raise oai.ApiError('TIMEOUT', 'slow provider', 408)
+        run.client = Client()
+        with mock.patch.object(oai, 'RETRY_COUNT', 0):
+            with self.assertRaises(OrchestratorError) as cm:
+                run.call_target([])
+        self.assertEqual(cm.exception.status, 'INCONCLUSIVE_PROVIDER')
+
+    def test_clamped_timeout_is_budget_exhaustion(self):
+        # When the client timeout was clamped down to the remaining budget, a
+        # timeout IS budget exhaustion (terminal, no fallback).
+        from unittest import mock
+        from soundtrace_live.orchestrator import _TaskRun, OrchestratorError
+        oai = self._oai
+        run = _TaskRun.__new__(_TaskRun)
+        rem = iter([1.0, 1.0, 1.0])        # start 1.0 < 5.0 timeout: clamped
+        run.remaining = lambda: next(rem)
+        run.target_model = 'x'
+
+        class Client:
+            _timeout = 5.0
+            def create(self, **kw):
+                raise oai.ApiError('TIMEOUT', 'deadline hit', 408)
+        run.client = Client()
+        with mock.patch.object(oai, 'RETRY_COUNT', 0):
+            with self.assertRaises(OrchestratorError) as cm:
+                run.call_target([])
+        self.assertEqual(cm.exception.status, 'AGENT_BUDGET_EXHAUSTED')
+
+    def test_recorder_death_diagnostic_strips_and_redacts_provider_keys(self):
+        # The recorder subprocess must not inherit any provider key, and any key
+        # value that still reaches its stderr must be redacted before it lands
+        # in the durable result diagnostic.
+        from soundtrace_live.orchestrator import Broker, OrchestratorError
+        self.addCleanup(os.environ.pop, 'ANTHROPIC_API_KEY', None)
+        os.environ['ANTHROPIC_API_KEY'] = 'sk-ant-secret-value'
+        argv = [sys.executable, '-c',
+                'import os, sys; sys.stdin.readline(); '
+                'sys.stderr.write("inherited=" '
+                '+ os.environ.get("ANTHROPIC_API_KEY", "ABSENT") '
+                '+ " echoed=sk-ant-secret-value\\n"); '
+                'sys.stderr.flush(); sys.exit(9)']
+        broker = Broker(self.work / 'corpus.json', self.work, self.key,
+                        self.tmp / 'b2.json',
+                        stderr_path=self.tmp / 'r2.stderr.log', argv=argv)
+        try:
+            with self.assertRaises(OrchestratorError) as cm:
+                broker.request({'kind': 'ping'})
+        finally:
+            broker.kill()
+        diag = cm.exception.diagnostic
+        self.assertIn('inherited=ABSENT', diag)      # key not inherited
+        self.assertNotIn('sk-ant-secret-value', diag)
+        self.assertIn('[REDACTED]', diag)            # echoed value redacted
+
+    # ------------------------------------------------ post-publish resume
+    def test_checkpoint_written_after_publish(self):
+        result, run_dir, bundle, _, _ = self.run_case()
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        signed = json.loads((run_dir / 'checkpoint.json').read_text())
+        self.assertIn('hmac_sha256', signed)
+        body = signed['body']
+        self.assertEqual(body['schema'], 'soundtrace-run-checkpoint-v1')
+        self.assertEqual(body['run_id'], bundle['payload']['run_id'])
+        self.assertTrue(body['reported'])
+        self.assertIsNone(body['pending'])
+
+    def test_resume_published_run_recovers_without_agent_loop(self):
+        from soundtrace_live.orchestrator import resume_published_run
+        result, run_dir, _, _, _ = self.run_case()
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        original = json.loads((run_dir / 'result.json').read_text())
+        # Simulate a crash after the bundle published: drop the finished
+        # result + checker outputs.
+        (run_dir / 'result.json').unlink()
+        (run_dir / 'checker.json').unlink()
+        (run_dir / 'certificate.json').unlink()
+        # Resume with NO client/sandbox at all: the agent loop cannot run.
+        resumed = resume_published_run(run_dir, key_path=self.key,
+                                       lean=self.lean)
+        self.assertEqual(resumed['session_status'], 'COMPLETED')
+        self.assertEqual(resumed['claim_status'], original['claim_status'])
+        self.assertEqual(resumed['flag_success'], original['flag_success'])
+        self.assertEqual(resumed['run_id'], original['run_id'])
+        self.assertEqual(resumed['turns'], original['turns'])
+        self.assertEqual(resumed['evidence_ids'], original['evidence_ids'])
+        self.assertTrue((run_dir / 'result.json').is_file())
+        self.assertTrue((run_dir / 'checker.json').is_file())
+
+    def test_resume_published_run_rejects_without_bundle(self):
+        from soundtrace_live.orchestrator import resume_published_run
+        empty = self.tmp / 'empty_run'
+        empty.mkdir()
+        with self.assertRaises(Rejected):
+            resume_published_run(empty, key_path=self.key, lean=self.lean)
+
+    def test_resume_published_run_replays_report_none_and_pending(self):
+        from soundtrace_live.orchestrator import (resume_published_run,
+                                                  CHECKPOINT_SCHEMA)
+        from evidence import canonical_json, mac_hex
+        _, run_dir, bundle, _, _ = self.run_case()
+        run_id = bundle['payload']['run_id']
+        key = self.key.read_bytes()
+        state = json.loads(
+            (run_dir / 'checkpoint.json').read_text())['body']['state']
+
+        def sign(body):
+            return json.dumps(
+                {'body': body,
+                 'hmac_sha256': mac_hex(key, canonical_json(body))})
+        # report_none branch: returns the loop status, never runs the checker.
+        (run_dir / 'checkpoint.json').write_text(sign({
+            'schema': CHECKPOINT_SCHEMA, 'run_id': run_id,
+            'session_status': 'AGENT_REPORTED_NONE', 'reported': False,
+            'pending': None, 'state': state}))
+        (run_dir / 'result.json').unlink()
+        resumed = resume_published_run(run_dir, key_path=self.key,
+                                       lean=self.lean)
+        self.assertEqual(resumed['session_status'], 'AGENT_REPORTED_NONE')
+        # pending branch: returns the deferred terminal status verbatim.
+        (run_dir / 'checkpoint.json').write_text(sign({
+            'schema': CHECKPOINT_SCHEMA, 'run_id': run_id,
+            'session_status': 'COMPLETED', 'reported': True,
+            'pending': {'status': 'CHECKER_REJECTED', 'diagnostic': 'd'},
+            'state': state}))
+        resumed2 = resume_published_run(run_dir, key_path=self.key,
+                                        lean=self.lean)
+        self.assertEqual(resumed2['session_status'], 'CHECKER_REJECTED')
+        self.assertEqual(resumed2['diagnostic'], 'd')
+
+    def test_resume_rejects_tampered_checkpoint(self):
+        from soundtrace_live.orchestrator import resume_published_run
+        _, run_dir, _, _, _ = self.run_case()
+        ckpt_path = run_dir / 'checkpoint.json'
+        signed = json.loads(ckpt_path.read_text())
+        # Forge a verified claim on a verify-bypassing branch; the runner-key
+        # HMAC must reject the edit instead of emitting a forged verdict.
+        signed['body']['reported'] = False
+        signed['body']['session_status'] = 'COMPLETED'
+        signed['body']['state']['claim_status'] = 'BOUND'
+        ckpt_path.write_text(json.dumps(signed))
+        with self.assertRaises(Rejected):
+            resume_published_run(run_dir, key_path=self.key, lean=self.lean)
+
+    def test_resume_rejects_corrupt_checkpoint(self):
+        from soundtrace_live.orchestrator import resume_published_run
+        _, run_dir, _, _, _ = self.run_case()
+        (run_dir / 'checkpoint.json').write_text('{"body": {"trunc')
+        with self.assertRaises((Rejected, ValueError)):
+            resume_published_run(run_dir, key_path=self.key, lean=self.lean)
+
+    def test_atomic_write_replaces_and_leaves_no_residue(self):
+        from soundtrace_live.orchestrator import _atomic_write
+        target = self.tmp / 'atom' / 'f.json'
+        target.parent.mkdir()
+        _atomic_write(target, 'first')
+        self.assertEqual(target.read_text(), 'first')
+        _atomic_write(target, 'second')
+        self.assertEqual(target.read_text(), 'second')
+        self.assertEqual(list(target.parent.glob('*.tmp-*')), [])
+
+    # ------------------------------------------------- staged budgets
+    def test_turn_limit_is_enforced_and_configurable(self):
+        turns = [[msg('exploring'),
+                  call(f'c{i}', 'shell', reasoning_chunk='looking',
+                       command='true')] for i in range(5)]
+        result, _, _, client, _ = self.run_case(turns=turns, turn_limit=2)
+        self.assertEqual(result['session_status'], 'AGENT_BUDGET_EXHAUSTED')
+        self.assertEqual(result['turns'], 2)
+        self.assertEqual(len(client.target_inputs), 2)
+
+    def test_soft_budget_injects_one_time_report_nudge(self):
+        turns = [[msg('exploring'),
+                  call(f'c{i}', 'shell', reasoning_chunk='looking',
+                       command='true')] for i in range(5)]
+        _, _, _, client, _ = self.run_case(turns=turns, turn_limit=4)
+
+        def nudged(items):
+            return sum(1 for it in items
+                       if isinstance(it.get('content'), str)
+                       and 'Budget is nearly spent' in it['content'])
+        sent = [inp for _m, inp in client.target_inputs]
+        self.assertEqual(len(sent), 4)                 # hard stop at 4 turns
+        # soft = int(4*0.75) = 3: no nudge on calls 0-2, present from call 3.
+        self.assertEqual([i for i, s in enumerate(sent) if nudged(s)], [3])
+        self.assertEqual(nudged(sent[3]), 1)           # injected exactly once
+
+    # ------------------------------------------------- context compaction
+    def test_compact_items_elides_old_large_tool_outputs(self):
+        from soundtrace_live.orchestrator import _TaskRun
+        run = _TaskRun.__new__(_TaskRun)
+        items = [{'role': 'system', 'content': 'sys'},
+                 {'role': 'user', 'content': 'begin'}]
+        for i in range(12):
+            items.append({'type': 'function_call', 'call_id': f'c{i}',
+                          'name': 'shell', 'arguments': '{}'})
+            items.append({'type': 'function_call_output', 'call_id': f'c{i}',
+                          'output': 'X' * 4000})
+        compacted = run._compact_items(items)
+        outs = [it for it in compacted
+                if it.get('type') == 'function_call_output']
+        full = [o for o in outs if len(o['output']) >= 4000]
+        elided = [o for o in outs if 'elided' in o['output']]
+        self.assertEqual(len(full), 8)      # newest COMPACT_RECENT_OUTPUTS kept
+        self.assertEqual(len(elided), 4)    # older ones elided
+        self.assertEqual(compacted[0], {'role': 'system', 'content': 'sys'})
+        self.assertEqual(sum(1 for it in compacted
+                             if it.get('type') == 'function_call'), 12)
+        # Non-mutating: the original items are untouched.
+        self.assertTrue(all(len(it['output']) == 4000 for it in items
+                            if it.get('type') == 'function_call_output'))
+
+    def test_compact_items_is_noop_below_window(self):
+        from soundtrace_live.orchestrator import _TaskRun
+        run = _TaskRun.__new__(_TaskRun)
+        items = [{'role': 'system', 'content': 'sys'},
+                 {'type': 'function_call_output', 'call_id': 'c0',
+                  'output': 'X' * 4000}]
+        self.assertIs(run._compact_items(items), items)   # same object, unchanged
+
+    def test_target_loop_compacts_old_outputs_in_model_input(self):
+        from soundtrace_live.orchestrator import FakeSandbox
+
+        class BigSandbox(FakeSandbox):
+            def shell(self, command, *, timeout=None):
+                self.commands.append(command)
+                return 0, 'X' * 2000
+        box = BigSandbox({'poc.bin': POC_BYTES})
+        turns = [[msg('exploring'),
+                  call(f'c{i}', 'shell', reasoning_chunk='looking',
+                       command=f'echo {i}')] for i in range(12)]
+        _, _, _, client, _ = self.run_case(
+            turns=turns, turn_limit=12, sandbox_factory=lambda _l: box)
+        last_input = client.target_inputs[-1][1]
+        outs = [it for it in last_input if isinstance(it, dict)
+                and it.get('type') == 'function_call_output']
+        elided = [o for o in outs if 'elided' in (o.get('output') or '')]
+        full = [o for o in outs if 'XXXX' in (o.get('output') or '')]
+        self.assertTrue(elided)              # old outputs elided from re-sent context
+        self.assertLessEqual(len(full), 8)   # at most COMPACT_RECENT_OUTPUTS verbatim
+
+    # ------------------------------------------------- cache hit-rate
+    def test_usage_reads_cached_tokens_from_both_shapes(self):
+        from soundtrace_live.orchestrator import _usage, _hit_rate
+        self.assertEqual(_usage({'usage': {'input_tokens': 100,
+            'output_tokens': 20, 'cached_tokens': 40}}), (100, 20, 40))
+        self.assertEqual(_usage({'usage': {'input_tokens': 100,
+            'output_tokens': 20,
+            'input_tokens_details': {'cached_tokens': 30}}}), (100, 20, 30))
+        self.assertEqual(_usage({'usage': {'input_tokens': 5,
+            'output_tokens': 1}}), (5, 1, 0))            # no cache detail
+        self.assertEqual(_hit_rate({'input_tokens': 200,
+                                    'cached_input_tokens': 50}), 0.25)
+        self.assertEqual(_hit_rate({'input_tokens': 0,
+                                    'cached_input_tokens': 0}), 0.0)
+
+    def test_cache_hit_rate_reported_in_result_and_metrics(self):
+        class CachedClient(FakeClient):
+            def create(self, *, model, input_items, **kwargs):
+                resp = super().create(model=model, input_items=input_items,
+                                      **kwargs)
+                if model == TARGET and kwargs.get('max_output_tokens') != 16:
+                    resp['usage'] = {'input_tokens': 100, 'output_tokens': 5,
+                                     'cached_tokens': 60}
+                return resp
+        client = CachedClient(HAPPY_TURNS)
+        client.provider = 'fake'
+        result, run_dir, _, _, _ = self.run_case(
+            client_factory=lambda _p: client)
+        self.assertEqual(result['session_status'], 'COMPLETED')
+        self.assertGreater(result['tokens']['cached_input_tokens'], 0)
+        self.assertEqual(result['cache_hit_rate'], 0.6)
+        metrics = json.loads((run_dir / 'metrics.json').read_text())
+        self.assertEqual(metrics['cache_hit_rate'], 0.6)
 
     # ----------------------------------------------------- provider chains
     def test_preflight_falls_back_to_second_chain_entry(self):
@@ -628,13 +1092,13 @@ class OrchestratorTests(unittest.TestCase):
         result, _, _, _, _ = self.run_case(
             turns=turns, modes=('ok', 'ok'),
             target_chain=[('p1', TARGET), ('p2', TARGET)],
-            client_factory=factory)
+            client_factory=factory, model_retries=0)
         self.assertEqual(result['session_status'], 'COMPLETED')
         self.assertEqual(result['target_provider'], 'p2')
         self.assertEqual(len(result['attempts']), 2)
         self.assertEqual(result['attempts'][0]['provider'], 'p1')
         self.assertEqual(result['attempts'][0]['session_status'],
-                         'INCONCLUSIVE_MODEL_API')
+                         'INCONCLUSIVE_PROVIDER')
         self.assertEqual(result['attempts'][1]['provider'], 'p2')
         self.assertEqual(result['attempts'][1]['session_status'], 'COMPLETED')
         # Each attempt kept its own run dir for audit.
@@ -656,7 +1120,7 @@ class OrchestratorTests(unittest.TestCase):
         client.fail_translator_on_final = ApiError('SERVER', 'boom', 500)
         result, _, bundle, _, _ = self.run_case(
             translator_chain=[('p1', TRANSLATOR), ('p2', 'kimi-alt')],
-            client_factory=lambda _provider: client)
+            client_factory=lambda _provider: client, model_retries=0)
         self.assertEqual(result['session_status'], 'COMPLETED')
         self.assertEqual(result['translator_provider'], 'p2')
         self.assertEqual(result['translator_model'], 'kimi-alt')
@@ -756,13 +1220,13 @@ class OrchestratorTests(unittest.TestCase):
         result, _, _, _, _ = self.run_case(
             turns=turns, modes=('ok', 'ok'),
             target_chain=[('p1', TARGET), ('p2', TARGET), ('p3', TARGET)],
-            client_factory=factory)
+            client_factory=factory, model_retries=0)
         self.assertEqual(result['session_status'], 'COMPLETED')
         self.assertEqual(result['target_provider'], 'p3')
         ledger = result['attempts']
         self.assertEqual([e['provider'] for e in ledger], ['p2', 'p3'])
         self.assertEqual(ledger[0]['session_status'],
-                         'INCONCLUSIVE_MODEL_API')
+                         'INCONCLUSIVE_PROVIDER')
         # The preflight diagnostics of the skipped entry stay in the ledger.
         skipped = ledger[0]['preflight']
         self.assertEqual(
@@ -801,7 +1265,7 @@ class OrchestratorTests(unittest.TestCase):
         result, _, bundle, _, _ = self.run_case(
             translator_chain=[('t1', TRANSLATOR), ('t2', 'alt2'),
                               ('t3', 'alt3')],
-            client_factory=factory)
+            client_factory=factory, model_retries=0)
         self.assertEqual(result['session_status'], 'COMPLETED')
         self.assertEqual(result['translator_provider'], 't3')
         self.assertEqual(result['resolved_translator_model'], 'alt3')
@@ -854,8 +1318,8 @@ class OrchestratorTests(unittest.TestCase):
 
         result, _, _, _, _ = self.run_case(
             translator_chain=[('t1', TRANSLATOR), ('t2', 'alt2')],
-            client_factory=factory)
-        self.assertEqual(result['session_status'], 'INCONCLUSIVE_MODEL_API')
+            client_factory=factory, model_retries=0)
+        self.assertEqual(result['session_status'], 'INCONCLUSIVE_PROVIDER')
         self.assertIn('second boom', result['diagnostic'])
         self.assertEqual(result['translator_provider'], 't2')
 
@@ -881,7 +1345,7 @@ class OrchestratorTests(unittest.TestCase):
 
         result, _, _, _, _ = self.run_case(
             translator_chain=[('t1', TRANSLATOR), ('t2', 'alt2')],
-            client_factory=factory)
+            client_factory=factory, model_retries=0)
         self.assertEqual(result['session_status'], 'INCONCLUSIVE_CAPTURE')
         self.assertIn('RuntimeError', result['diagnostic'])
 
@@ -920,7 +1384,7 @@ class OrchestratorTests(unittest.TestCase):
                    'TRANSLATOR_CALL_WINDOW_S', 0.5):
             result, _, _, _, _ = self.run_case(
                 translator_chain=[('t1', TRANSLATOR), ('t2', 'alt2')],
-                client_factory=factory)
+                client_factory=factory, model_retries=0)
         self.assertEqual(result['session_status'], 'COMPLETED')
         self.assertEqual(result['translator_provider'], 't2')
 
@@ -1254,6 +1718,60 @@ class ShellTruncationTests(unittest.TestCase):
             self.assertLessEqual(len(output), SHELL_OUTPUT_LIMIT + 200)
             self.assertEqual(sandbox.cid, 'test-container')
             self.assertFalse(getattr(sandbox, '_stopped', False))
+
+
+class RetryTransientTests(unittest.TestCase):
+    def setUp(self):
+        import soundtrace_live.openai_responses as oai
+        self.oai = oai
+        self.sleeps = []
+        self.addCleanup(setattr, oai, '_sleep', oai._sleep)
+        oai._sleep = self.sleeps.append
+
+    def test_retries_transient_then_succeeds(self):
+        calls = []
+
+        def call():
+            calls.append(1)
+            if len(calls) < 3:
+                raise self.oai.ApiError('SERVER', 'x', 500)
+            return 'ok'
+        out = self.oai.retry_transient(call, remaining=lambda: 100.0,
+                                       retries=2, base=1.0)
+        self.assertEqual(out, 'ok')
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(self.sleeps, [1.0, 2.0])
+
+    def test_exhausts_retries_then_reraises(self):
+        def call():
+            raise self.oai.ApiError('SERVER', 'x', 500)
+        with self.assertRaises(self.oai.ApiError):
+            self.oai.retry_transient(call, remaining=lambda: 100.0,
+                                     retries=2, base=1.0)
+        self.assertEqual(self.sleeps, [1.0, 2.0])
+
+    def test_non_transient_reason_not_retried(self):
+        calls = []
+
+        def call():
+            calls.append(1)
+            raise self.oai.ApiError('AUTH', 'x', 401)
+        with self.assertRaises(self.oai.ApiError):
+            self.oai.retry_transient(call, remaining=lambda: 100.0, retries=2)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_backoff_capped_by_decreasing_remaining(self):
+        rem = [1.5]
+        self.oai._sleep = lambda s: rem.__setitem__(0, rem[0] - s)
+
+        def call():
+            raise self.oai.ApiError('SERVER', 'x', 500)
+        with self.assertRaises(self.oai.ApiError):
+            self.oai.retry_transient(call, remaining=lambda: rem[0],
+                                     retries=5, base=1.0)
+        # Backoff shrinks with remaining (1.0 then 0.5, then 0 -> stop).
+        self.assertLessEqual(rem[0], 0.0)
 
 
 if __name__ == '__main__':

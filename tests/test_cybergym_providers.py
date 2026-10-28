@@ -148,14 +148,17 @@ class ProviderClientTests(unittest.TestCase):
             include_encrypted_reasoning=True, parallel_tool_calls=False,
             extra_body={'access_programs': {'cyber': 'daybreak_blue'}})
         body = self.bodies()[-1]
-        self.assertEqual(body['system'], 'system prompt')
+        self.assertEqual(body['system'],
+                         [{'type': 'text', 'text': 'system prompt',
+                           'cache_control': {'type': 'ephemeral'}}])
         self.assertEqual(body['model'], 'glm-5.3')
         self.assertEqual(body['max_tokens'], 8192 + 8192)
         self.assertEqual(body['thinking'],
                          {'type': 'enabled', 'budget_tokens': 8192})
         self.assertEqual(body['tools'], [
             {'name': 'shell', 'description': 'run',
-             'input_schema': {'type': 'object', 'properties': {}}}])
+             'input_schema': {'type': 'object', 'properties': {}},
+             'cache_control': {'type': 'ephemeral'}}])
         # system+user -> user message; assistant-side items merge into one
         # assistant message; outputs merge into one tool_result user message.
         self.assertEqual(len(body['messages']), 3)
@@ -256,7 +259,8 @@ class ProviderClientTests(unittest.TestCase):
         self.assertEqual(first['model'], 'glm-5.3')
         self.assertEqual(first['status'], 'completed')
         self.assertEqual(first['usage'],
-                         {'input_tokens': 5, 'output_tokens': 7})
+                         {'input_tokens': 5, 'output_tokens': 7,
+                          'cached_tokens': 0})
         self.assertEqual(first['output'], [
             {'type': 'reasoning',
              'encrypted_content': json.dumps(thinking, separators=(',', ':'))},
@@ -286,6 +290,21 @@ class ProviderClientTests(unittest.TestCase):
                 {'type': 'tool_result', 'tool_use_id': 'toolu_1',
                  'content': '{"exit_code": 0}'}]}])
 
+    def test_cache_read_tokens_fold_into_input_and_report_cached(self):
+        self.server.responses.append({
+            'id': 'msg_c', 'model': 'm', 'type': 'message',
+            'role': 'assistant', 'stop_reason': 'end_turn',
+            'content': [{'type': 'text', 'text': 'hi'}],
+            'usage': {'input_tokens': 10, 'output_tokens': 4,
+                      'cache_read_input_tokens': 90,
+                      'cache_creation_input_tokens': 5}})
+        client = self.client(auth='bearer')
+        response = client.create(model='m', input_items=PING_ITEMS)
+        # Total input folds cache read + creation; cached_tokens = cache reads.
+        self.assertEqual(response['usage'],
+                         {'input_tokens': 105, 'output_tokens': 4,
+                          'cached_tokens': 90})
+
     def test_forced_json_schema_uses_respond_tool(self):
         schema = {'type': 'object', 'additionalProperties': False,
                   'required': ['kind'],
@@ -306,7 +325,8 @@ class ProviderClientTests(unittest.TestCase):
                          {'name': 'respond',
                           'description': 'Respond with the structured '
                                          'output object.',
-                          'input_schema': schema})
+                          'input_schema': schema,
+                          'cache_control': {'type': 'ephemeral'}})
         self.assertEqual(response['output'][0], {
             'type': 'message',
             'content': [{'type': 'output_text',

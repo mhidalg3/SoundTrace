@@ -567,7 +567,7 @@ class CybergymBackend:
             require(entry == expected['tasks'][task_id],
                     f'build task {task_id} does not match the pinned environment')
 
-    def validate_execution(self, execution: Any) -> None:
+    def validate_execution(self, execution: Any, build: str = 'vul') -> None:
         """Offline twin of the live admissibility gate; raises Rejected."""
         require(isinstance(execution, dict), 'execution must be an object')
         require(set(execution) == set(EXECUTION_KEYS),
@@ -583,13 +583,16 @@ class CybergymBackend:
         require(_is_int(execution['poc_size'])
                 and 0 < execution['poc_size'] <= POC_LIMIT_BYTES,
                 'poc_size out of bounds')
-        require(execution['image_ref'] == task.vul.reference
-                and execution['image_digest'] == task.vul.digest,
-                'execution does not use the pinned vulnerable image')
+        require(build in ('vul', 'fix'), 'build must be vul or fix')
+        image = task.vul if build == 'vul' else task.fix
+        command = task.command_vul if build == 'vul' else task.command_fix
+        require(execution['image_ref'] == image.reference
+                and execution['image_digest'] == image.digest,
+                'execution does not use the pinned build image')
         require(execution['platform'] == self.corpus.platform,
                 'execution platform mismatch')
         require(execution['command']
-                == [*_TIMEOUT_ARGV, *task.command_vul],
+                == [*_TIMEOUT_ARGV, *command],
                 'execution command is not the pinned probe invocation')
         require(_is_int(execution['exit_code']), 'exit_code must be an integer')
         signal = execution['signal']
@@ -841,8 +844,9 @@ class CybergymBackend:
         return doc[0]['State']
 
     def execute_probe(self, task_id: str, poc_sha256: str, execution_id: str,
-                      *, host_timeout: float = HOST_TIMEOUT_S) -> dict:
-        """Run one PoC in the pinned vulnerable image; raise on mistrust."""
+                      *, host_timeout: float = HOST_TIMEOUT_S,
+                      build: str = 'vul') -> dict:
+        """Run one PoC in the pinned build image (vul|fix); raise on mistrust."""
         require(isinstance(execution_id, str)
                 and _EXECUTION_ID_RE.fullmatch(execution_id),
                 'execution id must match Xn')
@@ -851,6 +855,9 @@ class CybergymBackend:
             task = self.corpus.task(task_id)
         except CorpusError as exc:
             raise _capture(exc.diagnostic) from None
+        require(build in ('vul', 'fix'), 'build must be vul or fix')
+        image = task.vul if build == 'vul' else task.fix
+        command = task.command_vul if build == 'vul' else task.command_fix
         if not self.dso_path.is_file():
             raise _capture('probe DSO missing: run bootstrap first',
                            'INCONCLUSIVE_SETUP')
@@ -896,7 +903,7 @@ class CybergymBackend:
         container_name = f'soundtrace-probe-{execution_id}-{secrets.token_hex(6)}'
         cid = ''
         try:
-            argv = self._create_argv(task.vul.reference, task.command_vul,
+            argv = self._create_argv(image.reference, command,
                                      poc_file, events_dir=events_dir,
                                      container_name=container_name)
             created = self._run(argv, setup=False)
@@ -1001,10 +1008,10 @@ class CybergymBackend:
             'task_id': task_id,
             'poc_sha256': poc_sha256,
             'poc_size': poc_size,
-            'image_ref': task.vul.reference,
-            'image_digest': task.vul.digest,
+            'image_ref': image.reference,
+            'image_digest': image.digest,
             'platform': self.corpus.platform,
-            'command': [*_TIMEOUT_ARGV, *task.command_vul],
+            'command': [*_TIMEOUT_ARGV, *command],
             'exit_code': exit_code,
             'signal': signal,
             'oom_killed': oom_killed,

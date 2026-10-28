@@ -44,6 +44,37 @@ class ApiError(Exception):
         self.status_code = status_code
 
 
+TRANSIENT_REASONS = ('SERVER', 'RATE_LIMIT', 'NETWORK', 'TIMEOUT')
+RETRY_COUNT = 2
+RETRY_BASE_S = 1.0
+
+
+def _sleep(seconds: float) -> None:
+    """Indirection so tests can patch out real backoff sleeps."""
+    time.sleep(seconds)
+
+
+def retry_transient(call, *, remaining, retries=None, base=None):
+    """Run ``call()``; retry a transient ``ApiError`` with bounded exponential
+    backoff (capped by ``remaining()`` seconds). Re-raises on a non-transient
+    reason or once retries are exhausted; the caller classifies the final
+    failure into a session status."""
+    retries = RETRY_COUNT if retries is None else retries
+    base = RETRY_BASE_S if base is None else base
+    attempt = 0
+    while True:
+        try:
+            return call()
+        except ApiError as exc:
+            if exc.reason not in TRANSIENT_REASONS or attempt >= retries:
+                raise
+            wait = min(base * (2 ** attempt), max(0.0, remaining()))
+            if wait <= 0:
+                raise
+            _sleep(wait)
+            attempt += 1
+
+
 def _snippet(body: bytes, api_key: str | None) -> str:
     """First <=200 bytes of a response body, UTF-8 replaced, key-stripped."""
     text = body[:ERROR_SNIPPET_BYTES].decode('utf-8', 'replace')

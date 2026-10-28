@@ -75,7 +75,8 @@ def _digest(value: Any, what: str) -> None:
 # ---- structural validation -------------------------------------------
 
 def validate_execution(execution: Any,
-                       expected_task: dict[str, Any] | None = None) -> None:
+                       expected_task: dict[str, Any] | None = None,
+                       *, build: str = 'vul') -> None:
     """Strict schema for one recorded CyberGym probe execution.
 
     When a pinned build task is supplied, bind the image reference and exact
@@ -100,18 +101,21 @@ def validate_execution(execution: Any,
             and all(isinstance(c, str) and c for c in execution['command'])
             and execution['command'], 'execution command')
     if expected_task is not None:
+        require(build in ('vul', 'fix'), 'build must be vul or fix')
         require(isinstance(expected_task, dict),
                 'pinned task entry must be an object')
-        require(isinstance(expected_task.get('vul_ref'), str)
-                and isinstance(expected_task.get('vul_digest'), str)
+        ref_key = 'vul_ref' if build == 'vul' else 'fix_ref'
+        digest_key = 'vul_digest' if build == 'vul' else 'fix_digest'
+        require(isinstance(expected_task.get(ref_key), str)
+                and isinstance(expected_task.get(digest_key), str)
                 and isinstance(expected_task.get('command_vul'), list)
                 and expected_task['command_vul']
                 and all(isinstance(part, str) and part
                         for part in expected_task['command_vul']),
                 'pinned task entry is malformed')
-        require(execution['image_ref'] == expected_task['vul_ref'],
+        require(execution['image_ref'] == expected_task[ref_key],
                 'execution image reference differs from the pinned task')
-        require(execution['image_digest'] == expected_task['vul_digest'],
+        require(execution['image_digest'] == expected_task[digest_key],
                 'execution image digest differs from the pinned task')
         require(execution['command'] == [
             '/usr/bin/timeout', '-s', 'KILL', '10',
@@ -523,6 +527,9 @@ def admit_cybergym(payload: dict, claim_id: str) -> tuple[dict, list]:
     build = payload.get('build')
     require(isinstance(build, dict) and isinstance(build.get('tasks'), dict),
             'payload build tasks must be an object')
+    target_build = payload.get('target_build')
+    require(target_build in ('vul', 'fix'),
+            'payload target_build must be vul or fix')
     if claim_id not in claims:
         raise AdapterError('CLAIM_MISMATCH', f'no frozen claim {claim_id!r} in this bundle')
     entry = claims[claim_id]
@@ -537,7 +544,7 @@ def admit_cybergym(payload: dict, claim_id: str) -> tuple[dict, list]:
             task_entry = build['tasks'].get(execution.get('task_id'))
             require(task_entry is not None,
                     'execution names a task outside the build')
-            validate_execution(execution, task_entry)
+            validate_execution(execution, task_entry, build=target_build)
     except Rejected as exc:
         raise AdapterError('CLAIM_MISMATCH', str(exc)) from exc
 

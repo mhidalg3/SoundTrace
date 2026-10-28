@@ -237,12 +237,102 @@ then both agents fall back to the generic `task` role, whose small local
 context overflows. Map the roles, then run the canary above once and
 confirm a signed bundle before a campaign.
 
+Bounded campaign (subscription only, two instances + inversions):
+`soundtrace_live.campaign.run_campaign` drives several episodes through the
+named-agent path above, writing one signed trace/bundle per episode under
+`out_root/<label>` plus a `campaign.json` manifest. The default campaign is
+`arvo:64574` (jq) and `arvo:47101` (binutils), each run twice — once against
+the vulnerable build and once against the patched build as a null control
+(`target_build='fix'`). No API keys are read; every episode runs on omp
+subscription quotas via `pilot`/`translator`.
+
+```python
+from soundtrace_live.corpus import load_corpus
+from soundtrace_live.campaign import run_campaign
+
+corpus = load_corpus('corpora/cybergym_pilot.json')   # canonical lock/provenance
+manifest = await run_campaign(
+    corpus, work_dir='/tmp/cg-runset', key_path='/tmp/runner.key',
+    lean=LEAN, out_root='/tmp/campaign', deadline_s=600,
+    spawn=agent_spawn, corpus_path='corpora/cybergym_pilot.json')
+```
+
+The shared `work_dir` holds only the signed trusted environment lock (pinned
+vul+fix images, probe DSO, corpus); it carries no agent context. Each episode
+gets its own `out_dir` and a fresh one-shot `pilot`/`translator` spawn per
+turn, so neither agent sees another instance's transcript, kernel, or scratch
+state (no cross-instance context). The campaign selects the two task IDs from
+the canonical pilot corpus; it never mints a new corpus, so the existing
+environment lock and qualification stay valid.
+
+Patched inversions are first-class: the probe runs the pinned *fixed* image,
+the signed bundle records `target_build: "fix"`, and admission authorizes the
+fixed image only — a fix-build bundle can never be replayed as a vulnerable
+claim (or vice versa). On a patched build no admissible OOB exists, so a
+verified/bound OOB there is reported as a `CONTROL_VIOLATED` false positive.
+
+Per-episode pipeline diagnostics (`pipeline_progress`) name the first of seven
+stages where progress stopped — `agent_investigation`, `trusted_execution`,
+`evidence_delivery`, `claim_submission`, `translation`, `checker`,
+`lean_kernel` — so a failure is not collapsed into "no certificate". Each
+episode is assessed against its expected outcome. Vulnerable builds:
+`OOB_VERIFIED` / `CERTIFIED_NO_FLAG` (verified cert, PoC did not confirm the
+flag) / `NO_DEMONSTRATION` (explicit `report_none` or a refused claim) /
+`INSUFFICIENT_EVIDENCE` (budget/API/setup/timeout). Patched inversions:
+`CONTROL_HELD` (explicit `report_none`, no bound claim) / `CONTROL_VIOLATED`
+(a verified or bound OOB on the patched build — a false positive) /
+`FALSE_CLAIM_REJECTED` (the pilot asserted an OOB and the pipeline refused it)
+/ `INSUFFICIENT_EVIDENCE`.
+
+Mode A (oracle-assisted verification, Gate 2): `soundtrace_live.oracle_mode`
+validates the proof pipeline on a real execution *without* autonomous
+discovery. `run_oracle_mode(corpus, task_id, oracle_poc=..., side=...,
+access_kind=..., work_dir=..., key_path=..., lean=LEAN, out_dir=...)` probes a
+known oracle input through the trusted recorder (an in-process `_Session`,
+not the `runner.py` subprocess), routes an explicit valid explanation through
+the real `Translator` component — driven by a deterministic `StepsClient`
+(default/offline) or an injectable `client_factory` (provider / `@translator`,
+Gate 3) — assembles the direct certificate, and verifies it with the checker
+and Lean. `read_upper_oob_steps` generates the explicit argument for the
+upper-read family (matches the canonical `read_upper` argument, kernel-checked
+by the fixtures). The signed bundle
+records `target_build`, so a fix-build oracle run authorizes only the patched
+image. Distinct from autonomous campaign runs: no pilot agent, operator
+supplies the input and explanation. Offline-tested with a duck-typed backend
+and a fake kernel; live verification needs Docker + the pinned image + the
+Lean toolchain.
+
 Result vocabulary (never collapsed): session status is one of `COMPLETED`,
 `AGENT_REPORTED_NONE`, `AGENT_BUDGET_EXHAUSTED`, `INCONCLUSIVE_SETUP`,
-`INCONCLUSIVE_MODEL_ACCESS`, `INCONCLUSIVE_MODEL_API`,
-`INCONCLUSIVE_CAPTURE`, `UNSUPPORTED_TRANSLATION`, `CHECKER_REJECTED`,
+`INCONCLUSIVE_MODEL_ACCESS`, `INCONCLUSIVE_MODEL_API` (malformed response),
+`INCONCLUSIVE_PROVIDER` (transient provider/transport failure after bounded
+retries), `PROVIDER_REFUSAL` (target or translator provider-policy refusal;
+falls back when another chain entry remains, else terminal),
+`INCONCLUSIVE_CAPTURE`, `UNSUPPORTED_TRANSLATION`,
+`CHECKER_REJECTED`,
 `INCONCLUSIVE_LEAN`; `flag_success` (functional PoC success), `claim_status`
-(checker verdict), and `translation_status` are recorded independently.
+(checker verdict), `translation_status`, and `target_build` (`vul`|`fix`) are
+recorded independently.
+
+Durable checkpoint + resume: after the signed bundle is published, each run
+writes `checkpoint.json` (run_id + the agent-loop state the checker/result
+need). `resume_published_run(run_dir, key_path=, lean=)` finishes a run whose
+bundle published before a crash by re-running only the checker — never the
+agent loop; the cryptographic verdict is always recomputed from the signed
+bundle, so the unsigned checkpoint can carry only operator metrics. The
+campaign writes `campaign.json` after every episode; `run_campaign(...,
+resume=True)` skips episodes already recorded with a result, post-publish-
+resumes an episode whose bundle published before a crash, and re-runs the rest.
+
+Cost discipline: a session is bounded by staged budgets — 40 turns and 720s
+(12 min) by default, both configurable (`run_task(..., turn_limit=,
+deadline_s=)`). At 75% of either budget the orchestrator injects one report
+nudge so the agent commits before the hard stop. Re-sent context is compacted —
+the newest eight tool-result bodies stay verbatim, older large ones become a
+placeholder (model input only; the signed trace keeps everything). The stable
+prefix is prompt-cached (automatic on OpenAI; `cache_control` on the Anthropic
+system + tools); `result.json`/`metrics.json` report `cache_hit_rate`
+(cached ÷ input tokens).
 
 Trust boundary for `cybergym-asan-v1`: HMAC attests the runner recorded these
 bytes; soundness is relative to the pinned CyberGym image, its sanitizer

@@ -257,7 +257,7 @@ def _translate_tool_choice(tool_choice) -> dict:
 
 # ----------------------------------------------------- response conversion
 
-def _usage_ints(usage) -> tuple[int, int]:
+def _usage_ints(usage) -> tuple[int, int, int]:
     if not isinstance(usage, dict):
         raise ApiError('MALFORMED', 'messages response usage is malformed')
     values = []
@@ -266,7 +266,15 @@ def _usage_ints(usage) -> tuple[int, int]:
         if type(value) is not int or value < 0:
             raise ApiError('MALFORMED', 'messages response usage is malformed')
         values.append(value)
-    return values[0], values[1]
+    cached = 0
+    for field in ('cache_read_input_tokens', 'cache_creation_input_tokens'):
+        extra = usage.get(field, 0) or 0
+        if type(extra) is not int or extra < 0:
+            raise ApiError('MALFORMED', 'messages response usage is malformed')
+        if field == 'cache_read_input_tokens':
+            cached = extra
+        values[0] += extra          # report total input incl. cache tokens
+    return values[0], values[1], cached
 
 
 def _normalize_response(payload: dict, forced: bool) -> dict:
@@ -277,7 +285,7 @@ def _normalize_response(payload: dict, forced: bool) -> dict:
     model = payload.get('model')
     if not isinstance(model, str) or not model:
         raise ApiError('MALFORMED', 'messages response has no model string')
-    usage_in, usage_out = _usage_ints(payload.get('usage'))
+    usage_in, usage_out, usage_cached = _usage_ints(payload.get('usage'))
     output: list[dict] = []
     respond_input = None
     for block in payload['content']:
@@ -332,7 +340,8 @@ def _normalize_response(payload: dict, forced: bool) -> dict:
         status = 'incomplete'
     return {'id': str(payload.get('id') or ''), 'model': model,
             'status': status, 'output': output,
-            'usage': {'input_tokens': usage_in, 'output_tokens': usage_out}}
+            'usage': {'input_tokens': usage_in, 'output_tokens': usage_out,
+                      'cached_tokens': usage_cached}}
 
 
 # -------------------------------------------------------------- transport
@@ -588,7 +597,8 @@ class AnthropicClient:
                       'max_tokens': max_output_tokens or DEFAULT_MAX_TOKENS,
                       'messages': messages}
         if system is not None:
-            body['system'] = system
+            body['system'] = [{'type': 'text', 'text': system,
+                               'cache_control': {'type': 'ephemeral'}}]
         if tools is not None:
             body['tools'] = _translate_tools(tools)
         if text_json_schema is not None:
@@ -603,6 +613,12 @@ class AnthropicClient:
             body['tool_choice'] = {'type': 'tool', 'name': 'respond'}
         elif tool_choice is not None:
             body['tool_choice'] = _translate_tool_choice(tool_choice)
+        # Cache the whole tool prefix with one breakpoint on the final tool,
+        # whether the list ends in a user tool or the forced-schema respond
+        # tool (translator calls use the latter).
+        if body.get('tools'):
+            body['tools'][-1] = {**body['tools'][-1],
+                                 'cache_control': {'type': 'ephemeral'}}
         if reasoning_effort is not None and self._thinking:
             if self._thinking_api == 'adaptive':
                 # Wire shape verified for both the 4-6 and 5 generations

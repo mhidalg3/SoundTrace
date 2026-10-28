@@ -278,6 +278,32 @@ class TranslatorFlowTests(unittest.TestCase):
             # the runner-facing attempt body carries source_seq 5
             self.assertEqual(recorder.log[0][0], 'attempt')
 
+    def test_no_timeout_client_respects_budget_on_retry(self):
+        import soundtrace_live.openai_responses as oai
+        rem = [1.0]
+        calls = []
+
+        class NoTimeoutClient:          # deliberately no _timeout attribute
+            def create(self, **kw):
+                calls.append(1)
+                raise oai.ApiError('SERVER', 'blip', 500)
+
+        orig_sleep = oai._sleep
+        oai._sleep = lambda s: rem.__setitem__(0, rem[0] - s)  # sleep burns budget
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                t = Translator(FakeRecorder(), lambda: NoTimeoutClient(),
+                               Path(tmp), remaining=lambda: rem[0])
+                with self.assertRaises(oai.ApiError) as cm:
+                    t.finalize('final', 5, SNAPSHOT,
+                               {'execution_id': 'X1', 'event_id': 'A1',
+                                'access_kind': 'read', 'side': 'upper'})
+        finally:
+            oai._sleep = orig_sleep
+        # The retry must NOT issue a second request once the budget is gone.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(cm.exception.reason, 'TIMEOUT')
+
 
 class SchemaAlignmentTests(unittest.TestCase):
     """A schema-conforming response must pass step validation unchanged."""

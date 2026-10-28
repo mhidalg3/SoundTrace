@@ -149,6 +149,7 @@ def make_payload(steps=None, *, side='upper', access_kind='read', frm='goal',
         executions.append(second_execution)
     return {'format': 'soundtrace-cybergym-run-v1', 'run_id': RUN_ID,
             'producer': 'cybergym-asan-v1', 'build': build(),
+            'target_build': 'vul',
             'executions': executions, 'trace': trace,
             'claims': {'C1': {'claim': claim, 'available_at': 9, 'frozen': frozen}}}
 

@@ -56,7 +56,7 @@ class FakeBackend:
         self.script = script or [('ok', fake_execution('X1'))]
         self.calls = []
 
-    def validate_execution(self, execution):
+    def validate_execution(self, execution, build='vul'):
         return None
 
     def validate_build(self, build):
@@ -65,7 +65,7 @@ class FakeBackend:
     def build_record(self):
         return build_record_stub()
     def execute_probe(self, task_id, poc_sha256, execution_id, *,
-                      host_timeout=30.0):
+                      host_timeout=30.0, build='vul'):
         self.calls.append((task_id, poc_sha256, execution_id))
         if not self.script:
             raise FakeCaptureError('no script left')
@@ -78,9 +78,10 @@ class FakeBackend:
 class SessionDriver:
     """Feeds requests to a real _Session and captures emitted responses."""
 
-    def __init__(self, backend):
+    def __init__(self, backend, target_build='vul'):
         self.out = Path('/tmp/cg-test-bundle.json')
-        self.session = _Session(KEY, self.out, backend=backend)
+        self.session = _Session(KEY, self.out, backend=backend,
+                                target_build=target_build)
         self.responses = []
         self.exit = 0
 
@@ -104,9 +105,9 @@ class SessionDriver:
         return json.loads(self.out.read_text())
 
 
-def drive_happy_path(backend=None, steps=None):
+def drive_happy_path(backend=None, steps=None, target_build='vul'):
     steps = steps if steps is not None else [dict(s) for s in STEPS]
-    driver = SessionDriver(backend or FakeBackend())
+    driver = SessionDriver(backend or FakeBackend(), target_build=target_build)
     resp = driver.send({'kind': 'model_session', 'argument_id': 'C1',
                         'session_sha256': '1' * 64, 'difficulty': 'level1',
                         'target_model': 'gpt-daybreak-blue-latest',
@@ -161,6 +162,30 @@ class RunnerCybergymTests(unittest.TestCase):
         self.assertEqual(frozen['state'], 'bound')
         self.assertEqual(frozen['binding']['task_id'], TASK)
         self.assertEqual(frozen['binding']['poc_sha256'], POC)
+
+    def test_fix_build_bundle_validates_and_binds_fix_image(self):
+        fix_exec = dict(fake_execution('X1'),
+                        image_ref='n132/arvo:368-fix@sha256:' + 'c' * 64,
+                        image_digest='sha256:' + 'c' * 64)
+        driver, _ = drive_happy_path(
+            backend=FakeBackend(script=[('ok', fix_exec)]),
+            target_build='fix')
+        code, _ = driver.publish()
+        self.assertEqual(code, 0)
+        bundle = driver.bundle()
+        validate_bundle(bundle)
+        self.assertEqual(bundle['payload']['target_build'], 'fix')
+        self.assertEqual(
+            bundle['payload']['claims']['C1']['frozen']['binding']['image_digest'],
+            'sha256:' + 'c' * 64)
+
+    def test_vul_execution_rejected_under_fix_target_build(self):
+        driver, _ = drive_happy_path()
+        driver.publish()
+        bundle = driver.bundle()
+        bundle['payload']['target_build'] = 'fix'
+        with self.assertRaises(Rejected):
+            validate_bundle(bundle)
 
     def test_clean_probe_records_no_observations(self):
         backend = FakeBackend(script=[('ok', fake_execution('X1', exit_code=0,
